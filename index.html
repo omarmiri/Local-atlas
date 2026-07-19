@@ -347,6 +347,18 @@
     background:var(--sign-green);border:2px solid #fff;border-radius:50%;
     box-shadow:0 2px 6px rgba(0,0,0,.35);
   }
+  .tap-pin{
+    background:#fff;border:3px dashed var(--sign-green);border-radius:50%;
+    box-shadow:0 2px 6px rgba(0,0,0,.3);
+  }
+  .tap-popup{font-family:'Public Sans',system-ui,sans-serif;font-size:.85rem}
+  .tap-actions{display:flex;gap:6px;margin-top:8px}
+  .tap-actions button{
+    border:0;border-radius:8px;cursor:pointer;padding:6px 10px;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.75rem;
+  }
+  .tap-actions .tapgo{background:var(--sign-green);color:#fff}
+  .tap-actions .tapno{background:#EDF1EE;color:var(--ink-soft)}
   .here-pin{
     background:var(--sun);border:3px solid var(--sign-green);border-radius:50%;
     box-shadow:0 2px 8px rgba(0,0,0,.4);
@@ -393,7 +405,7 @@
 <body>
 
 <div id="map" role="application" aria-label="Map of the United States and Canada"></div>
-<div class="hint-chip" id="hintChip">Tap a town marker to explore it</div>
+<div class="hint-chip" id="hintChip">Tap anywhere on the map to explore that area</div>
 <button class="reopen" id="reopenBtn">◂ Local Atlas</button>
 
 <aside class="panel" id="panel">
@@ -1054,7 +1066,8 @@ function drawPOIs(kind){
         <div class="poi-more">${poiDetailHTML(it, idx++)}</div>
       </details>`;
     L.circleMarker([it.lat, it.lon], {
-      radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9
+      radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9,
+      bubblingMouseEvents:false
     }).addTo(poiLayer)
       .bindPopup(
         `<strong>${esc(it.name)}</strong>${openBadge(it.hours)}<br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
@@ -1414,6 +1427,34 @@ function renderNews(items){
   html += `<div class="sec-note">Live headline search — open the outlets for full stories.</div>`;
   contentEl.innerHTML = html;
 }
+
+/* ---------------- tap anywhere to explore ---------------- */
+const tapIcon = L.divIcon({ className:'tap-pin', iconSize:[16,16] });
+let tapMarker = null;
+function removeTapMarker(){ if(tapMarker){ tapMarker.remove(); tapMarker = null; } }
+map.on('click', async e=>{
+  const lat = e.latlng.lat, lon = e.latlng.lng;
+  removeTapMarker();
+  tapMarker = L.marker([lat, lon], { icon:tapIcon, zIndexOffset:1200 }).addTo(map);
+  const el = document.createElement('div');
+  el.className = 'tap-popup';
+  el.innerHTML = `<em>Finding place…</em>`;
+  tapMarker.bindPopup(el, { closeButton:false, offset:[0,-4] }).openPopup();
+  const rp = await reversePlace(lat, lon);
+  if(!tapMarker) return;                                  // cancelled while looking up
+  el.innerHTML = `<strong>${esc(rp.name)}</strong>
+    <div class="tap-actions">
+      <button class="tapgo">Explore here</button>
+      <button class="tapno">Cancel</button>
+    </div>`;
+  el.querySelector('.tapgo').addEventListener('click', ()=>{
+    map.closePopup(); removeTapMarker();
+    loadPlace({ lat, lon, name:rp.name, country:rp.country });
+  });
+  el.querySelector('.tapno').addEventListener('click', ()=>{ map.closePopup(); removeTapMarker(); });
+  tapMarker.getPopup().update();
+});
+map.on('popupclose', e=>{ if(tapMarker && e.popup === tapMarker.getPopup()) removeTapMarker(); });
 
 /* ---------------- nearby towns when zoomed out ---------------- */
 let townTimer = null;
