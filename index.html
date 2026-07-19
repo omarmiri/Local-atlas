@@ -43,7 +43,47 @@
     box-shadow:var(--shadow);
     border:1px solid var(--line);
     overflow:hidden;
+    transition:transform .3s ease;
   }
+  .panel.slid{transform:translateX(calc(-100% - 24px))}
+  @media (prefers-reduced-motion:reduce){.panel{transition:none}}
+  .reopen{
+    position:fixed;z-index:999;top:16px;left:0;
+    display:none;
+    background:var(--sign-green);color:#fff;border:0;cursor:pointer;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.8rem;
+    letter-spacing:.04em;text-transform:uppercase;
+    padding:12px 14px 12px 12px;border-radius:0 10px 10px 0;
+    box-shadow:var(--shadow);
+  }
+  .reopen.show{display:block}
+  .head-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .hide-btn{
+    background:transparent;border:0;color:#CFE3D9;cursor:pointer;
+    font-size:1.05rem;line-height:1;padding:4px 6px;border-radius:6px;
+  }
+  .hide-btn:hover{background:rgba(255,255,255,.12);color:#fff}
+  .viewtoggle{display:flex;gap:0;margin:0 0 10px}
+  .viewtoggle button{
+    flex:1;border:1.5px solid var(--sign-green);background:#fff;color:var(--sign-green);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.74rem;
+    text-transform:uppercase;letter-spacing:.05em;padding:7px 0;cursor:pointer;
+  }
+  .viewtoggle button:first-child{border-radius:8px 0 0 8px}
+  .viewtoggle button:last-child{border-radius:0 8px 8px 0;border-left:0}
+  .viewtoggle button[aria-pressed="true"]{background:var(--sign-green);color:#fff}
+  .chiprow{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 14px}
+  .chiprow a{
+    text-decoration:none;font-family:'Overpass',sans-serif;font-weight:700;font-size:.74rem;
+    color:var(--sign-green);border:1.5px solid var(--sign-green);border-radius:99px;
+    padding:6px 12px;
+  }
+  .chiprow a:hover{background:var(--sign-green);color:#fff}
+  .social-item{padding:11px 0;border-bottom:1px solid var(--line)}
+  .social-item:last-child{border-bottom:none}
+  .social-item h3{font-size:.9rem;font-weight:600;line-height:1.4}
+  .social-item h3 a{color:inherit}
+  .social-item .meta{font-family:'IBM Plex Mono',monospace;font-size:.68rem;color:var(--sign-green);margin-top:4px}
   .panel-head{
     background:var(--sign-green);
     color:#fff;
@@ -250,8 +290,10 @@
     .panel{
       top:auto;left:0;right:0;bottom:0;width:100%;
       height:62vh;border-radius:18px 18px 0 0;
-      transition:height .25s ease;
+      transition:height .25s ease, transform .3s ease;
     }
+    .panel.slid{transform:translateY(110%)}
+    .reopen{top:auto;bottom:0;left:0;right:0;border-radius:12px 12px 0 0;text-align:center}
     .panel.collapsed{height:118px}
     .panel.collapsed .place-badge,
     .panel.collapsed .tabs,
@@ -272,11 +314,15 @@
 
 <div id="map" role="application" aria-label="Map of the United States"></div>
 <div class="hint-chip" id="hintChip">Tap a town marker to explore it</div>
+<button class="reopen" id="reopenBtn">◂ Local Atlas</button>
 
 <aside class="panel" id="panel">
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
-    <div class="brand"><h1>Local Atlas</h1><span>USA</span></div>
+    <div class="head-top">
+      <div class="brand"><h1>Local Atlas</h1><span>USA</span></div>
+      <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
+    </div>
     <div class="searchrow">
       <input id="q" type="text" placeholder="ZIP code or city, state" autocomplete="off"
              aria-label="Search by ZIP code or city">
@@ -300,6 +346,7 @@
     <button class="tab" role="tab" data-tab="services" aria-selected="false">Services</button>
     <button class="tab" role="tab" data-tab="attractions" aria-selected="false">See &amp; Do</button>
     <button class="tab" role="tab" data-tab="food" aria-selected="false">Eat</button>
+    <button class="tab" role="tab" data-tab="social" aria-selected="false">Social</button>
   </div>
 
   <div class="content" id="content">
@@ -390,6 +437,13 @@ async function fetchJSON(url, opts){
   const r = await fetch(url, opts);
   if(!r.ok) throw new Error('HTTP '+r.status);
   return r.json();
+}
+/* fetch with a hard timeout — a free service that hangs (no response, no
+   error) otherwise leaves a spinner forever */
+function fetchT(url, opts={}, ms=12000){
+  const ctl = new AbortController();
+  const t = setTimeout(()=>ctl.abort(), ms);
+  return fetch(url, { ...opts, signal:ctl.signal }).finally(()=>clearTimeout(t));
 }
 
 /* ---------------- geocoding ---------------- */
@@ -515,6 +569,11 @@ async function renderTab(name){
       const n = await getNews(token);
       if(token!==state.reqToken || state.tab!=='news') return;
       renderNews(n);
+    }else if(name==='social'){
+      showLoading('Checking local chatter on Reddit…');
+      const s = await getSocial(token);
+      if(token!==state.reqToken || state.tab!=='social') return;
+      renderSocial(s);
     }else{
       const labels = { services:'public services', attractions:'things to see', food:'places to eat' };
       showLoading('Finding '+labels[name]+' nearby…');
@@ -620,13 +679,13 @@ function overpassQuery(body){
     let lastErr = new Error('places service unavailable');
     for(const url of OVERPASS_MIRRORS){
       try{
-        const r = await fetch(url, {
+        const r = await fetchT(url, {
           method:'POST', body:'data='+encodeURIComponent(body),
           headers:{'Content-Type':'application/x-www-form-urlencoded'}
-        });
+        }, 14000);
         if(!r.ok){ lastErr = new Error('places server busy, HTTP '+r.status); continue; }
         return await r.json();
-      }catch(e){ lastErr = e; }
+      }catch(e){ lastErr = e.name==='AbortError' ? new Error('places server timed out') : e; }
     }
     throw lastErr;
   };
@@ -666,7 +725,12 @@ function renderPOIs(items, kind){
       Try a larger town nearby, or a different category.</p></div>`;
     return;
   }
-  let html = `<div class="sec-note">${items.length} places within ~4.5 miles · also pinned on the map</div>`;
+  let html = `
+    <div class="viewtoggle" role="group" aria-label="List or map view">
+      <button aria-pressed="true">List</button>
+      <button aria-pressed="false">Map</button>
+    </div>
+    <div class="sec-note">${items.length} places within ~4.5 miles · every one is pinned on the map</div>`;
   for(const it of items){
     html += `
       <div class="poi">
@@ -675,7 +739,70 @@ function renderPOIs(items, kind){
       </div>`;
     L.circleMarker([it.lat, it.lon], {
       radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9
-    }).addTo(poiLayer).bindTooltip(it.name);
+    }).addTo(poiLayer)
+      .bindPopup(`<strong>${esc(it.name)}</strong><br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi`);
+  }
+  contentEl.innerHTML = html;
+  const [listBtn, mapBtn] = contentEl.querySelectorAll('.viewtoggle button');
+  mapBtn.addEventListener('click', ()=>{ hidePanel(); map.flyToBounds(getPOIBounds(items), {padding:[40,40], maxZoom:15}); });
+  listBtn.addEventListener('click', showPanel);
+}
+function getPOIBounds(items){
+  return L.latLngBounds(items.map(i=>[i.lat, i.lon]).concat([[state.place.lat, state.place.lon]]));
+}
+
+/* ---------------- social (Reddit + platform search links) ---------------- */
+function socialLinks(){
+  const city = state.place.name;
+  const q = encodeURIComponent(city);
+  return `
+    <div class="sec-note">Search this town on other platforms:</div>
+    <div class="chiprow">
+      <a href="https://x.com/search?q=${q}&f=live" target="_blank" rel="noopener">X / Twitter</a>
+      <a href="https://www.instagram.com/explore/search/keyword/?q=${q}" target="_blank" rel="noopener">Instagram</a>
+      <a href="https://www.tiktok.com/search?q=${q}" target="_blank" rel="noopener">TikTok</a>
+      <a href="https://www.facebook.com/search/top?q=${q}" target="_blank" rel="noopener">Facebook</a>
+      <a href="https://nextdoor.com/" target="_blank" rel="noopener">Nextdoor</a>
+    </div>`;
+}
+async function getSocial(){
+  if(state.cache.social) return state.cache.social;
+  const cityFull = state.place.name;                 // "Marquette, MI"
+  const search = `https://www.reddit.com/search.json?q=${encodeURIComponent('"'+cityFull+'" OR "'+cityFull.split(',')[0]+'"')}&sort=new&limit=12&t=month`;
+  let txt;
+  try{
+    const r = await fetchT(search, {}, 8000);        // Reddit sometimes allows direct browser reads
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    txt = await r.text();
+  }catch(e){
+    txt = await proxiedText(search);                 // otherwise go through the proxy cascade
+  }
+  const d = JSON.parse(txt);
+  const posts = (d?.data?.children || []).map(c=>c.data).filter(p=>p && p.title).map(p=>({
+    title: p.title,
+    sub: p.subreddit_name_prefixed,
+    ups: p.ups,
+    comments: p.num_comments,
+    when: p.created_utc ? new Date(p.created_utc*1000).toLocaleDateString() : '',
+    link: 'https://www.reddit.com'+p.permalink
+  }));
+  state.cache.social = posts;
+  return posts;
+}
+function renderSocial(posts){
+  let html = socialLinks();
+  if(!posts.length){
+    html += `<div class="empty-state"><p>No recent Reddit posts mention this town.
+      Bigger towns usually have their own subreddit — try the platform links above.</p></div>`;
+    contentEl.innerHTML = html; return;
+  }
+  html += `<div class="sec-note">Recent Reddit posts mentioning ${esc(state.place.name)}:</div>`;
+  for(const p of posts){
+    html += `
+      <div class="social-item">
+        <h3><a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.title)}</a></h3>
+        <div class="meta">${esc(p.sub)} · ▲ ${p.ups} · ${p.comments} comments · ${esc(p.when)}</div>
+      </div>`;
   }
   contentEl.innerHTML = html;
 }
@@ -689,6 +816,23 @@ async function getNews(){
   try{ return await getNewsClaude(); }
   catch(e){ return getNewsRSS(); }
 }
+/* shared CORS-proxy cascade for feeds that don't allow browser requests */
+async function proxiedText(url){
+  const routes = [
+    'https://corsproxy.io/?url=' + encodeURIComponent(url),
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(url)
+  ];
+  let lastErr = new Error('proxy routes unavailable');
+  for(const r of routes){
+    try{
+      const res = await fetchT(r, {}, 10000);
+      if(!res.ok){ lastErr = new Error('HTTP '+res.status); continue; }
+      return await res.text();
+    }catch(e){ lastErr = e.name==='AbortError' ? new Error('proxy timed out') : e; }
+  }
+  throw lastErr;
+}
+
 async function getNewsRSS(){
   const city = state.place.name;
   const feed = `https://news.google.com/rss/search?q=${encodeURIComponent('"'+city.split(',')[0]+'" local news')}&hl=en-US&gl=US&ceid=US:en`;
@@ -703,13 +847,10 @@ async function getNewsRSS(){
       src:   it.querySelector('source')?.textContent || ''
     }));
   };
-  // free CORS routes come and go — try three different ones
+  // free CORS routes come and go — proxy cascade first, rss2json as backup
   const routes = [
-    async ()=>{ const r = await fetch('https://corsproxy.io/?url='+encodeURIComponent(feed));
-                if(!r.ok) throw new Error('HTTP '+r.status); return parseXML(await r.text()); },
-    async ()=>{ const r = await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(feed));
-                if(!r.ok) throw new Error('HTTP '+r.status); return parseXML(await r.text()); },
-    async ()=>{ const r = await fetch('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feed));
+    async ()=> parseXML(await proxiedText(feed)),
+    async ()=>{ const r = await fetchT('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feed), {}, 10000);
                 if(!r.ok) throw new Error('HTTP '+r.status);
                 const d = await r.json();
                 if(d.status!=='ok' || !d.items?.length) throw new Error('feed unavailable');
@@ -867,6 +1008,18 @@ $('geoBtn').addEventListener('click', async ()=>{
     msg('Couldn’t determine your location — search by ZIP or city instead.', true);
   }
 });
+
+/* ---------------- panel show/hide ---------------- */
+function hidePanel(){
+  $('panel').classList.add('slid');
+  $('reopenBtn').classList.add('show');
+}
+function showPanel(){
+  $('panel').classList.remove('slid');
+  $('reopenBtn').classList.remove('show');
+}
+$('hideBtn').addEventListener('click', hidePanel);
+$('reopenBtn').addEventListener('click', showPanel);
 
 /* ---------------- mobile sheet toggle ---------------- */
 $('sheetToggle').addEventListener('click', ()=> $('panel').classList.toggle('collapsed'));
