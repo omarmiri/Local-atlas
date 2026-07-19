@@ -1168,6 +1168,7 @@ async function getSocial(){
       sub: p.subreddit_name_prefixed,
       ups: p.ups,
       comments: p.num_comments,
+      ts: p.created_utc ? p.created_utc*1000 : 0,
       when: p.created_utc ? new Date(p.created_utc*1000).toLocaleDateString() : '',
       link: 'https://www.reddit.com'+p.permalink
     }));
@@ -1185,12 +1186,14 @@ async function getSocial(){
                 if(d.status!=='ok') throw new Error('blocked');
                 return (d.items||[]).map(it=>({
                   title:it.title, sub:'reddit', ups:null, comments:null,
+                  ts: it.pubDate ? (Date.parse(it.pubDate) || 0) : 0,
                   when: it.pubDate ? new Date(it.pubDate).toLocaleDateString() : '',
                   link: it.link })); }
   ];
   for(const route of routes){
     try{
       const posts = await route();
+      posts.sort((a,b)=>(b.ts||0)-(a.ts||0));
       state.cache.social = posts;
       return posts;
     }catch(e){}
@@ -1281,15 +1284,16 @@ async function getNewsRSS(){
     try{ raw = await route(); break; }catch(e){ lastErr = e; }
   }
   if(!raw) throw lastErr || new Error('news routes unavailable');
-  const items = raw.slice(0, 8).map(it=>{
+  const items = raw.map(it=>{
     const src = it.src || (it.title.includes(' - ') ? it.title.split(' - ').pop() : '');
     const title = it.title.includes(' - ') ? it.title.split(' - ').slice(0,-1).join(' - ') : it.title;
     return {
       title, source: src,
+      ts: it.pub ? (Date.parse(it.pub) || 0) : 0,
       summary: it.pub ? new Date(it.pub).toLocaleString() : '',
       link: it.link || ''
     };
-  });
+  }).sort((a,b)=>b.ts-a.ts).slice(0, 8);
   state.cache.news = items;
   return items;
 }
