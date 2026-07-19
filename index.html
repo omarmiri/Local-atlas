@@ -79,6 +79,21 @@
     padding:6px 12px;
   }
   .chiprow a:hover{background:var(--sign-green);color:#fff}
+  .chiprow button.scan-deals{
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.74rem;
+    color:#fff;background:var(--sign-green);border:1.5px solid var(--sign-green);
+    border-radius:99px;padding:6px 12px;cursor:pointer;
+  }
+  .chiprow button.scan-deals:hover{filter:brightness(1.15)}
+  .deal-snip{
+    font-size:.8rem;line-height:1.5;color:var(--ink);
+    border-left:3px solid var(--sun);background:#FFFBEE;
+    padding:7px 10px;margin:6px 0;border-radius:0 8px 8px 0;
+  }
+  .deal-snip span{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:.62rem;
+    color:var(--ink-soft);margin-top:3px;
+  }
   .social-item{padding:11px 0;border-bottom:1px solid var(--line)}
   .social-item:last-child{border-bottom:none}
   .social-item h3{font-size:.9rem;font-weight:600;line-height:1.4}
@@ -800,19 +815,21 @@ async function getPOIs(kind){
   state.cache[key] = out;
   return out;
 }
-function dealsURL(it){
-  return 'https://www.google.com/search?q=' +
-    encodeURIComponent(`"${it.name}" ${state.place.name} deals OR coupons OR specials OR "happy hour"`);
-}
-function poiDetailHTML(it){
+function poiDetailHTML(it, idx){
   const rows = [];
   if(it.cuisine) rows.push(`<div class="row">Cuisine: ${esc(it.cuisine)}</div>`);
   if(it.hours)   rows.push(`<div class="row">Hours: ${esc(it.hours)}</div>`);
   if(it.phone)   rows.push(`<div class="row">${esc(it.phone)}</div>`);
   const acts = [];
-  if(it.website) acts.push(`<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>`);
-  acts.push(`<a href="${dealsURL(it)}" target="_blank" rel="noopener">Find deals</a>`);
-  return rows.join('') + `<div class="poi-actions chiprow" style="margin:8px 0 0">${acts.join('')}</div>`;
+  if(it.website){
+    acts.push(`<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>`);
+    acts.push(`<button class="scan-deals" data-idx="${idx}">Scan site for deals</button>`);
+  }else{
+    acts.push(`<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>`);
+  }
+  return rows.join('') +
+    `<div class="poi-actions chiprow" style="margin:8px 0 0">${acts.join('')}</div>` +
+    `<div class="deal-results" id="deals-${idx}"></div>`;
 }
 function renderPOIs(items, kind){
   poiLayer.clearLayers();
@@ -827,6 +844,8 @@ function renderPOIs(items, kind){
       <button aria-pressed="false">Map</button>
     </div>
     <div class="sec-note">${items.length} places within ~4.5 miles · tap an entry for details · all pinned on the map</div>`;
+  let idx = 0;
+  state.currentPOIs = items;
   for(const it of items){
     html += `
       <details class="poi">
@@ -834,7 +853,7 @@ function renderPOIs(items, kind){
           <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}</div></div>
           <div class="dist">${it.dist.toFixed(1)} mi</div>
         </summary>
-        <div class="poi-more">${poiDetailHTML(it)}</div>
+        <div class="poi-more">${poiDetailHTML(it, idx++)}</div>
       </details>`;
     L.circleMarker([it.lat, it.lon], {
       radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9
@@ -842,9 +861,7 @@ function renderPOIs(items, kind){
       .bindPopup(
         `<strong>${esc(it.name)}</strong><br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
         (it.hours ? `<br><small>${esc(it.hours)}</small>` : '') +
-        `<br>` +
-        (it.website ? `<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a> · ` : '') +
-        `<a href="${dealsURL(it)}" target="_blank" rel="noopener">Find deals</a>`);
+        (it.website ? `<br><a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a> — open its list entry to scan for deals` : ''));
   }
   contentEl.innerHTML = html;
   const [listBtn, mapBtn] = contentEl.querySelectorAll('.viewtoggle button');
@@ -854,6 +871,91 @@ function renderPOIs(items, kind){
 function getPOIBounds(items){
   return L.latLngBounds(items.map(i=>[i.lat, i.lon]).concat([[state.place.lat, state.place.lon]]));
 }
+
+/* ---------------- deals scanner ----------------
+   Fetches the business's own website (via the proxy cascade), scores text
+   for deal language, and follows one "specials"-type page if the site has
+   one. Client-side scraping has limits — JS-only sites yield nothing — so
+   there's always a curated fallback. */
+const DEAL_PATTERNS = [
+  [/happy hour/i, 5], [/coupon/i, 5], [/\d+\s?% off/i, 5], [/\$\s?\d+ off/i, 5],
+  [/bogo|buy one,? get one/i, 5], [/kids eat free|eat free/i, 5],
+  [/two[- ]for[- ]one|2 for 1/i, 4], [/student|senior|military discount/i, 4],
+  [/daily special|weekly special|lunch special|dinner special|drink special/i, 4],
+  [/early bird/i, 3], [/\bspecials\b/i, 3], [/promo code|promotion/i, 3],
+  [/\bdeals?\b/i, 2], [/discount/i, 2], [/prix fixe/i, 2]
+];
+function extractDealSnippets(html, label){
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script,style,noscript,svg').forEach(n=>n.remove());
+  const text = doc.body ? doc.body.textContent : '';
+  const lines = text.split(/\n|(?<=[.!?])\s+/).map(s=>s.replace(/\s+/g,' ').trim())
+    .filter(s=>s.length>=12 && s.length<=220);
+  const seen = new Set(), found = [];
+  for(const line of lines){
+    let score = 0;
+    for(const [rx,w] of DEAL_PATTERNS) if(rx.test(line)) score += w;
+    if(score >= 3){
+      const key = line.toLowerCase();
+      if(!seen.has(key)){ seen.add(key); found.push({ line, score, label }); }
+    }
+  }
+  // candidate deal pages linked from this page
+  const links = [];
+  doc.querySelectorAll('a[href]').forEach(a=>{
+    const t = (a.textContent||'').trim(), h = a.getAttribute('href')||'';
+    if(/special|deal|happy|promo|offer|coupon/i.test(t+' '+h) && t.length<60) links.push({ t: t||'Specials', h });
+  });
+  return { found, links };
+}
+async function scanDeals(it, box){
+  const cacheKey = 'deals_'+it.website;
+  if(state.cache[cacheKey]){ box.innerHTML = state.cache[cacheKey]; return; }
+  box.innerHTML = `<div class="loading"><div class="spinner"></div>Reading ${esc(new URL(it.website).hostname)}…</div>`;
+  let out = '';
+  let cand = null, candURL = null;
+  try{
+    const home = extractDealSnippets(await proxiedText(it.website), 'home page');
+    let all = home.found;
+    // follow the most promising deal page, one hop max
+    cand = home.links.find(l=>{ try{ new URL(l.h, it.website); return true; }catch(e){ return false; } });
+    if(cand){
+      candURL = new URL(cand.h, it.website).href;
+      try{
+        const sub = extractDealSnippets(await proxiedText(candURL), cand.t);
+        all = all.concat(sub.found);
+      }catch(e){}
+    }
+    all.sort((a,b)=>b.score-a.score);
+    const top = all.slice(0, 6);
+    if(top.length){
+      out += `<div class="sec-note" style="margin-top:10px">Deal mentions found on their site:</div>`;
+      for(const s of top){
+        out += `<div class="deal-snip">“${esc(s.line)}”<span>${esc(s.label)}</span></div>`;
+      }
+      if(candURL) out += `<div class="chiprow" style="margin-top:8px"><a href="${esc(candURL)}" target="_blank" rel="noopener">${esc(cand.t)} page</a></div>`;
+    }else{
+      out += `<div class="sec-note" style="margin-top:10px">No deal language on their site` +
+             (candURL ? ` — but they have a <a href="${esc(candURL)}" target="_blank" rel="noopener">${esc(cand.t)}</a> page worth checking.` : '.') +
+             ` Their current offers may only be posted on social or Groupon:</div>` +
+             `<div class="chiprow"><a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>` +
+             `<a href="https://www.facebook.com/search/top?q=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Facebook</a></div>`;
+    }
+  }catch(e){
+    out = `<div class="sec-note" style="margin-top:10px">Couldn't read their site (${esc(e.message)}). Try these instead:</div>` +
+          `<div class="chiprow"><a href="${esc(it.website)}" target="_blank" rel="noopener">Open site</a>` +
+          `<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a></div>`;
+  }
+  state.cache[cacheKey] = out;
+  box.innerHTML = out;
+}
+contentEl.addEventListener('click', ev=>{
+  const btn = ev.target.closest('.scan-deals');
+  if(!btn || !state.currentPOIs) return;
+  const it = state.currentPOIs[+btn.dataset.idx];
+  const box = $('deals-'+btn.dataset.idx);
+  if(it && box) scanDeals(it, box);
+});
 
 /* ---------------- social (Reddit + platform search links) ---------------- */
 function socialLinks(){
