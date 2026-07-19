@@ -2027,19 +2027,27 @@ $('geoBtn').addEventListener('click', async ()=>{
 /* ---------------- weather radar overlay (RainViewer) ---------------- */
 let radarLayer = null;
 $('radarBtn').addEventListener('click', async ()=>{
+  const btn = $('radarBtn');
   if(radarLayer){
     radarLayer.remove(); radarLayer = null;
-    $('radarBtn').setAttribute('aria-pressed','false');
+    btn.setAttribute('aria-pressed','false');
+    btn.textContent = '☂ Radar';
     return;
   }
+  btn.textContent = '☂ Loading…';
   try{
     const d = await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
     const fr = d.radar?.past?.slice(-1)[0];
-    if(!fr) return;
-    radarLayer = L.tileLayer(`https://tilecache.rainviewer.com/v2/radar/${fr.time}/256/{z}/{x}/{y}/2/1_1.png`,
-      { opacity:.65 }).addTo(map);
-    $('radarBtn').setAttribute('aria-pressed','true');
-  }catch(e){}
+    if(!fr || !fr.path) throw new Error('no frames');
+    const host = d.host || 'https://tilecache.rainviewer.com';
+    radarLayer = L.tileLayer(`${host}${fr.path}/256/{z}/{x}/{y}/2/1_1.png`,
+      { opacity:.65, attribution:'RainViewer' }).addTo(map);
+    btn.setAttribute('aria-pressed','true');
+    btn.textContent = '☂ Radar on';
+  }catch(e){
+    btn.textContent = '☂ Radar blocked';
+    setTimeout(()=>{ btn.textContent = '☂ Radar'; }, 2500);
+  }
 });
 
 /* ---------------- panel show/hide ---------------- */
