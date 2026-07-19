@@ -234,6 +234,32 @@ ${JSON.stringify(data).slice(0, 12000)}` }] }],
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
+/* ---- radar proxy (RainViewer) — same-origin so filtered networks still work ---- */
+app.get('/api/radar/meta', async (req, res) => {
+  try{
+    const d = await cached('radar:meta', 5 * 60e3, async () => {
+      const rr = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+      if(!rr.ok) throw new Error('RainViewer HTTP ' + rr.status);
+      return rr.json();
+    });
+    res.json(d);
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+app.get('/api/radar/tile', async (req, res) => {
+  try{
+    const { p, z, x, y } = req.query;
+    if(!/^\/v2\/(radar|nowcast)\/[\w-]+$/.test(String(p))) throw new Error('bad path');
+    if(![z, x, y].every(v => /^\d+$/.test(String(v)))) throw new Error('bad coords');
+    const url = `https://tilecache.rainviewer.com${p}/256/${z}/${x}/${y}/2/1_1.png`;
+    const buf = await cached('rt:' + url, 5 * 60e3, async () => {
+      const rr = await fetch(url);
+      if(!rr.ok) throw new Error('tile HTTP ' + rr.status);
+      return Buffer.from(await rr.arrayBuffer());
+    });
+    res.type('image/png').send(buf);
+  }catch(e){ res.status(502).send(''); }
+});
+
 app.use(express.static(path.join(__dirname)));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.listen(PORT, () => console.log('local-atlas listening on :' + PORT));

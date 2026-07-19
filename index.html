@@ -2036,12 +2036,16 @@ $('radarBtn').addEventListener('click', async ()=>{
   }
   btn.textContent = '☂ Loading…';
   try{
-    const d = await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
+    const be = await state.backendP;
+    const d = be.ok
+      ? await fetchJSON('/api/radar/meta')
+      : await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
     const fr = d.radar?.past?.slice(-1)[0];
     if(!fr || !fr.path) throw new Error('no frames');
-    const host = d.host || 'https://tilecache.rainviewer.com';
-    radarLayer = L.tileLayer(`${host}${fr.path}/256/{z}/{x}/{y}/2/1_1.png`,
-      { opacity:.65, attribution:'RainViewer' }).addTo(map);
+    const tileURL = be.ok
+      ? `/api/radar/tile?p=${encodeURIComponent(fr.path)}&z={z}&x={x}&y={y}`
+      : `${d.host || 'https://tilecache.rainviewer.com'}${fr.path}/256/{z}/{x}/{y}/2/1_1.png`;
+    radarLayer = L.tileLayer(tileURL, { opacity:.65, attribution:'RainViewer' }).addTo(map);
     btn.setAttribute('aria-pressed','true');
     btn.textContent = '☂ Radar on';
   }catch(e){
