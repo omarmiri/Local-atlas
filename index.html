@@ -2045,7 +2045,10 @@ $('radarBtn').addEventListener('click', async ()=>{
     const tileURL = be.ok
       ? `/api/radar/tile?p=${encodeURIComponent(fr.path)}&z={z}&x={x}&y={y}`
       : `${d.host || 'https://tilecache.rainviewer.com'}${fr.path}/256/{z}/{x}/{y}/2/1_1.png`;
-    radarLayer = L.tileLayer(tileURL, { opacity:.65, attribution:'RainViewer' }).addTo(map);
+    radarLayer = L.tileLayer(tileURL, {
+      opacity:.65, attribution:'RainViewer',
+      maxNativeZoom:10, maxZoom:19   // radar data stops at z10; upscale beyond it
+    }).addTo(map);
     btn.setAttribute('aria-pressed','true');
     btn.textContent = '☂ Radar on';
   }catch(e){
