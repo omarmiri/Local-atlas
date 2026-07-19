@@ -443,6 +443,7 @@
     <button class="tab" role="tab" data-tab="services" aria-selected="false">Services</button>
     <button class="tab" role="tab" data-tab="attractions" aria-selected="false">See &amp; Do</button>
     <button class="tab" role="tab" data-tab="food" aria-selected="false">Eat</button>
+    <button class="tab" role="tab" data-tab="shopping" aria-selected="false">Shop</button>
     <button class="tab" role="tab" data-tab="kids" aria-selected="false">Kids</button>
     <button class="tab" role="tab" data-tab="social" aria-selected="false">Social</button>
   </div>
@@ -726,7 +727,7 @@ async function renderTab(name){
       if(token!==state.reqToken || state.tab!=='social') return;
       renderSocial(s);
     }else{
-      const labels = { services:'public services', attractions:'things to see', food:'places to eat', kids:'kids activities' };
+      const labels = { services:'public services', attractions:'things to see', food:'places to eat', kids:'kids activities', shopping:'stores nearby' };
       state.poiFilter = null;
       showLoading('Finding '+labels[name]+' nearby…');
       const pois = await getPOIs(name, token);
@@ -869,15 +870,22 @@ const CAT_TOURISM_ATTR     = new Set(['attraction','museum','viewpoint','gallery
 const CAT_LEISURE_KIDS     = new Set(['playground','water_park','amusement_arcade','trampoline_park','ice_rink','miniature_golf','bowling_alley','swimming_pool']);
 const CAT_TOURISM_KIDS     = new Set(['zoo','theme_park','aquarium']);
 const CAT_AMENITY_KIDS     = new Set(['cinema','library']);
+const CAT_SHOP_BIGBOX = new Set(['department_store','supermarket','wholesale','doityourself','variety_store']);
+const CAT_SHOP = new Set(['mall','department_store','supermarket','wholesale','doityourself','variety_store',
+  'hardware','electronics','furniture','clothes','shoes','sports','toys','books','jewelry','gift',
+  'garden_centre','pet','second_hand','charity','outdoor','mobile_phone','convenience','music','stationery']);
 function buildCombinedQuery(lat, lon, r){
   const AM = [...new Set([...CAT_AMENITY_SERVICES, ...CAT_AMENITY_FOOD, ...CAT_AMENITY_KIDS])].join('|');
   const LE = [...CAT_LEISURE_KIDS, 'park'].join('|');
   const TO = [...CAT_TOURISM_ATTR].join('|');
-  return `[out:json][timeout:25];(
-    nwr["amenity"~"^(${AM})$"](around:${r},${lat},${lon});
-    nwr["tourism"~"^(${TO})$"](around:${r},${lat},${lon});
-    nwr["leisure"~"^(${LE})$"](around:${r},${lat},${lon});
-  );out center 220;`;
+  const SH = [...CAT_SHOP].join('|');
+  // separate out-statements give each group its own result cap, so one huge
+  // category (shops) can't starve the others in a single request
+  return `[out:json][timeout:30];
+    (nwr["amenity"~"^(${AM})$"](around:${r},${lat},${lon}););out center 300;
+    (nwr["tourism"~"^(${TO})$"](around:${r},${lat},${lon});
+     nwr["leisure"~"^(${LE})$"](around:${r},${lat},${lon}););out center 200;
+    (nwr["shop"~"^(${SH})$"](around:${r},${lat},${lon}););out center 300;`;
 }
 function categoriesOf(t){
   const cats = [];
@@ -894,6 +902,7 @@ function categoriesOf(t){
     if(t.leisure==='park' && t.name) cats.push('attractions');
     if(CAT_LEISURE_KIDS.has(t.leisure)) cats.push('kids');
   }
+  if(t.shop && CAT_SHOP.has(t.shop)) cats.push('shopping');
   return cats;
 }
 /* Overpass is a shared free service: single instances rate-limit quickly,
@@ -927,8 +936,8 @@ function overpassQuery(body){
 
 function bucketize(elements){
   const { lat, lon } = state.place;
-  const buckets = { services:[], attractions:[], food:[], kids:[] };
-  const seen = { services:new Set(), attractions:new Set(), food:new Set(), kids:new Set() };
+  const buckets = { services:[], attractions:[], food:[], kids:[], shopping:[] };
+  const seen = { services:new Set(), attractions:new Set(), food:new Set(), kids:new Set(), shopping:new Set() };
   const items = [];
   for(const e of (elements||[])){
     const t = e.tags || {};
@@ -941,7 +950,12 @@ function bucketize(elements){
       if(t.leisure === 'playground'){ name = 'Playground'; cats = ['kids']; }
       else continue;
     }
-    const kindLabel = (t.amenity || t.tourism || t.leisure || '').replaceAll('_',' ');
+    let kindLabel = (t.amenity || t.tourism || t.leisure || '').replaceAll('_',' ');
+    if(t.shop){
+      kindLabel = t.shop === 'mall' ? 'mall'
+                : CAT_SHOP_BIGBOX.has(t.shop) ? 'big box'
+                : t.shop.replaceAll('_',' ');
+    }
     items.push({ cats, item:{ name, kind:kindLabel, lat:la, lon:lo, dist:haversine(lat,lon,la,lo),
       website: t.website || t['contact:website'] || '',
       hours:   t.opening_hours || '',
@@ -955,7 +969,7 @@ function bucketize(elements){
     for(const c of cats){
       if(seen[c].has(item.name)) continue;
       seen[c].add(item.name);
-      if(buckets[c].length < 30) buckets[c].push(item);
+      if(buckets[c].length < 60) buckets[c].push(item);
     }
   }
   return buckets;
@@ -966,7 +980,7 @@ function getAllPOIs(){
   const { lat, lon } = state.place;
   const promise = (async ()=>{
     // warm local cache: same spot + radius within 24 h loads instantly
-    const lsKey = `poiv2:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
+    const lsKey = `poiv3:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
     try{
       const c = JSON.parse(localStorage.getItem(lsKey) || 'null');
       if(c && Date.now() - c.t < 864e5) return c.b;
@@ -1073,7 +1087,7 @@ function drawPOIs(kind){
       Try a larger town nearby, or a different category.</p></div>`;
     return;
   }
-  const filterable = (kind==='attractions' || kind==='kids');
+  const filterable = (kind==='attractions' || kind==='kids' || kind==='shopping');
   const items = (filterable && state.poiFilter)
     ? all.filter(i=>i.kind===state.poiFilter) : all;
   state.currentPOIs = items;
