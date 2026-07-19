@@ -674,6 +674,7 @@ async function loadPlace(place, { fly=true } = {}){
   if(fly) map.flyTo([place.lat, place.lon], 12, { duration:1.2 });
 
   selectTab(state.tab, true);
+  getAllPOIs().catch(()=>{});   // one combined request warms all four list tabs
   // prefetch alerts so the badge count shows even before that tab is opened
   getAlerts(token).then(a => {
     if(token !== state.reqToken) return;
@@ -860,25 +861,41 @@ function renderAlerts(alerts){
 }
 
 /* ---------------- POIs (Overpass) ---------------- */
-const POI_FILTERS = {
-  services: `
-    node["amenity"~"^(hospital|clinic|police|fire_station|library|townhall|post_office|pharmacy|community_centre)$"](around:R,LAT,LON);
-    way["amenity"~"^(hospital|clinic|police|fire_station|library|townhall|post_office|pharmacy|community_centre)$"](around:R,LAT,LON);`,
-  attractions: `
-    node["tourism"~"^(attraction|museum|viewpoint|gallery|zoo|theme_park|aquarium)$"](around:R,LAT,LON);
-    way["tourism"~"^(attraction|museum|viewpoint|gallery|zoo|theme_park|aquarium)$"](around:R,LAT,LON);
-    way["leisure"="park"]["name"](around:R,LAT,LON);`,
-  food: `
-    node["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream|bakery)$"](around:R,LAT,LON);
-    way["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream)$"](around:R,LAT,LON);`,
-  kids: `
-    node["leisure"~"^(playground|water_park|amusement_arcade|trampoline_park|ice_rink|miniature_golf|bowling_alley|swimming_pool)$"](around:R,LAT,LON);
-    way["leisure"~"^(playground|water_park|amusement_arcade|trampoline_park|ice_rink|miniature_golf|bowling_alley|swimming_pool)$"](around:R,LAT,LON);
-    node["tourism"~"^(zoo|theme_park|aquarium)$"](around:R,LAT,LON);
-    way["tourism"~"^(zoo|theme_park|aquarium)$"](around:R,LAT,LON);
-    node["amenity"~"^(cinema|library)$"](around:R,LAT,LON);
-    way["amenity"~"^(cinema|library)$"](around:R,LAT,LON);`
-};
+/* One combined Overpass query fetches every category in a single round trip;
+   results are bucketed client-side. Category membership by tag: */
+const CAT_AMENITY_SERVICES = new Set(['hospital','clinic','police','fire_station','library','townhall','post_office','pharmacy','community_centre']);
+const CAT_AMENITY_FOOD     = new Set(['restaurant','cafe','fast_food','bar','ice_cream','bakery']);
+const CAT_TOURISM_ATTR     = new Set(['attraction','museum','viewpoint','gallery','zoo','theme_park','aquarium']);
+const CAT_LEISURE_KIDS     = new Set(['playground','water_park','amusement_arcade','trampoline_park','ice_rink','miniature_golf','bowling_alley','swimming_pool']);
+const CAT_TOURISM_KIDS     = new Set(['zoo','theme_park','aquarium']);
+const CAT_AMENITY_KIDS     = new Set(['cinema','library']);
+function buildCombinedQuery(lat, lon, r){
+  const AM = [...new Set([...CAT_AMENITY_SERVICES, ...CAT_AMENITY_FOOD, ...CAT_AMENITY_KIDS])].join('|');
+  const LE = [...CAT_LEISURE_KIDS, 'park'].join('|');
+  const TO = [...CAT_TOURISM_ATTR].join('|');
+  return `[out:json][timeout:25];(
+    nwr["amenity"~"^(${AM})$"](around:${r},${lat},${lon});
+    nwr["tourism"~"^(${TO})$"](around:${r},${lat},${lon});
+    nwr["leisure"~"^(${LE})$"](around:${r},${lat},${lon});
+  );out center 220;`;
+}
+function categoriesOf(t){
+  const cats = [];
+  if(t.amenity){
+    if(CAT_AMENITY_SERVICES.has(t.amenity)) cats.push('services');
+    if(CAT_AMENITY_FOOD.has(t.amenity))     cats.push('food');
+    if(CAT_AMENITY_KIDS.has(t.amenity))     cats.push('kids');
+  }
+  if(t.tourism){
+    if(CAT_TOURISM_ATTR.has(t.tourism)) cats.push('attractions');
+    if(CAT_TOURISM_KIDS.has(t.tourism)) cats.push('kids');
+  }
+  if(t.leisure){
+    if(t.leisure==='park' && t.name) cats.push('attractions');
+    if(CAT_LEISURE_KIDS.has(t.leisure)) cats.push('kids');
+  }
+  return cats;
+}
 /* Overpass is a shared free service: single instances rate-limit quickly,
    which is why one tab can succeed and the next one fail. Rotate across
    public mirrors and run queries one at a time. */
@@ -908,113 +925,64 @@ function overpassQuery(body){
   return p;
 }
 
-async function getPOIs(kind){
-  const key = 'poi_'+kind+'_'+state.radiusM;
-  if(state.cache[key]) return state.cache[key];
+function bucketize(elements){
   const { lat, lon } = state.place;
-  const body = '[out:json][timeout:25];(' +
-    POI_FILTERS[kind].replaceAll('R', String(state.radiusM)).replaceAll('LAT',lat).replaceAll('LON',lon) +
-    ');out center 60;';
-  const d = await overpassQuery(body);
-  const items = (d.elements||[])
-    .map(e=>{
-      const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon;
-      let name = e.tags?.name;
-      if(!name && kind==='kids' && e.tags?.leisure==='playground') name = 'Playground';
-      if(!name || la==null) return null;
-      const kindLabel = (e.tags.amenity || e.tags.tourism || e.tags.leisure || '').replaceAll('_',' ');
-      return { name, kind:kindLabel, lat:la, lon:lo, dist:haversine(lat,lon,la,lo),
-               website: e.tags.website || e.tags['contact:website'] || '',
-               hours:   e.tags.opening_hours || '',
-               phone:   e.tags.phone || e.tags['contact:phone'] || '',
-               wiki:    e.tags.wikipedia || '',
-               addr:    [e.tags['addr:housenumber'], e.tags['addr:street']].filter(Boolean).join(' '),
-               cuisine: (e.tags.cuisine || '').replaceAll(';', ', ').replaceAll('_',' ') };
-    })
-    .filter(Boolean)
-    .sort((a,b)=>a.dist-b.dist);
-  // de-dup by name
-  const seen = new Set(), out = [];
-  for(const it of items){ if(!seen.has(it.name)){ seen.add(it.name); out.push(it); } if(out.length>=30) break; }
-  state.cache[key] = out;
-  return out;
-}
-/* Best-effort parser for common OSM opening_hours formats.
-   Returns true / false, or null when the format is beyond it (no badge shown).
-   Uses the viewer's clock — close enough for same-region browsing. */
-const DAY_IDX = { su:0, mo:1, tu:2, we:3, th:4, fr:5, sa:6 };
-function isOpenNow(spec){
-  if(!spec) return null;
-  try{
-    spec = spec.trim();
-    if(spec === '24/7') return true;
-    const now = new Date();
-    const today = now.getDay();
-    const mins = now.getHours()*60 + now.getMinutes();
-    let verdict = null;
-    for(let rule of spec.split(';')){
-      rule = rule.trim();
-      if(!rule || /PH|SH/i.test(rule)) continue;               // skip holiday rules
-      const closed = /\b(off|closed)\b/i.test(rule);
-      const dayPart = rule.match(/^([A-Za-z ,\-]+?)(?=\s+\d|\s*$|\s+off|\s+closed)/);
-      let days = null;                                          // null = every day
-      if(dayPart && /^[A-Za-z ,\-]+$/.test(dayPart[1].trim()) ){
-        days = new Set();
-        for(const tok of dayPart[1].split(',').map(s=>s.trim().toLowerCase()).filter(Boolean)){
-          const range = tok.split('-').map(s=>s.slice(0,2));
-          if(!(range[0] in DAY_IDX)) { days = null; break; }
-          if(range.length === 2 && range[1] in DAY_IDX){
-            let d = DAY_IDX[range[0]];
-            days.add(d);
-            while(d !== DAY_IDX[range[1]]){ d = (d+1)%7; days.add(d); }
-          } else days.add(DAY_IDX[range[0]]);
-        }
-      }
-      const applies = days === null || days.has(today);
-      if(!applies) continue;
-      if(closed){ verdict = false; continue; }
-      const times = [...rule.matchAll(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g)];
-      if(!times.length) continue;
-      let open = false;
-      for(const t of times){
-        const a = +t[1]*60 + +t[2], b = +t[3]*60 + +t[4];
-        if(b >= a ? (mins >= a && mins < b) : (mins >= a || mins < b)) open = true;  // handles past-midnight
-      }
-      verdict = open;
+  const buckets = { services:[], attractions:[], food:[], kids:[] };
+  const seen = { services:new Set(), attractions:new Set(), food:new Set(), kids:new Set() };
+  const items = [];
+  for(const e of (elements||[])){
+    const t = e.tags || {};
+    const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon;
+    if(la == null) continue;
+    let cats = categoriesOf(t);
+    if(!cats.length) continue;
+    let name = t.name;
+    if(!name){
+      if(t.leisure === 'playground'){ name = 'Playground'; cats = ['kids']; }
+      else continue;
     }
-    return verdict;
-  }catch(e){ return null; }
-}
-function openBadge(hours){
-  const v = isOpenNow(hours);
-  if(v === true)  return `<span class="openbadge open">Open</span>`;
-  if(v === false) return `<span class="openbadge closed">Closed</span>`;
-  return '';
-}
-function directionsURL(it){
-  return `https://www.google.com/maps/dir/?api=1&destination=${it.lat},${it.lon}`;
-}
-function gmapsURL(it){
-  return 'https://www.google.com/maps/search/?api=1&query=' +
-    encodeURIComponent(`${it.name} ${state.place.name}`);
-}
-function poiDetailHTML(it, idx){
-  const rows = [];
-  if(it.cuisine) rows.push(`<div class="row">Cuisine: ${esc(it.cuisine)}</div>`);
-  if(it.hours)   rows.push(`<div class="row">Hours: ${esc(it.hours)}</div>`);
-  if(it.phone)   rows.push(`<div class="row">${esc(it.phone)}</div>`);
-  const acts = [
-    `<a href="${gmapsURL(it)}" target="_blank" rel="noopener">Google Maps</a>`,
-    `<a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>`];
-  if(it.website){
-    acts.push(`<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>`);
-    acts.push(`<button class="scan-deals" data-idx="${idx}">Scan site for deals</button>`);
-  }else{
-    acts.push(`<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>`);
+    const kindLabel = (t.amenity || t.tourism || t.leisure || '').replaceAll('_',' ');
+    items.push({ cats, item:{ name, kind:kindLabel, lat:la, lon:lo, dist:haversine(lat,lon,la,lo),
+      website: t.website || t['contact:website'] || '',
+      hours:   t.opening_hours || '',
+      phone:   t.phone || t['contact:phone'] || '',
+      wiki:    t.wikipedia || '',
+      addr:    [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' '),
+      cuisine: (t.cuisine || '').replaceAll(';', ', ').replaceAll('_',' ') } });
   }
-  return `<div class="poi-desc" id="desc-${idx}"></div>` + rows.join('') +
-    `<div class="poi-actions chiprow" style="margin:8px 0 0">${acts.join('')}</div>` +
-    `<div class="deal-results" id="deals-${idx}"></div>`;
+  items.sort((a,b)=>a.item.dist-b.item.dist);
+  for(const { cats, item } of items){
+    for(const c of cats){
+      if(seen[c].has(item.name)) continue;
+      seen[c].add(item.name);
+      if(buckets[c].length < 30) buckets[c].push(item);
+    }
+  }
+  return buckets;
+}
+function getAllPOIs(){
+  const key = 'poiAll_'+state.radiusM;
+  if(state.cache[key]) return state.cache[key];        // promise shared by all tabs
+  const { lat, lon } = state.place;
+  const promise = (async ()=>{
+    // warm local cache: same spot + radius within 24 h loads instantly
+    const lsKey = `poiv2:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
+    try{
+      const c = JSON.parse(localStorage.getItem(lsKey) || 'null');
+      if(c && Date.now() - c.t < 864e5) return c.b;
+    }catch(e){}
+    const d = await overpassQuery(buildCombinedQuery(lat, lon, state.radiusM));
+    const b = bucketize(d.elements);
+    try{ localStorage.setItem(lsKey, JSON.stringify({ t:Date.now(), b })); }catch(e){}
+    return b;
+  })();
+  promise.catch(()=>{ if(state.cache[key] === promise) delete state.cache[key]; }); // failed fetches can retry
+  state.cache[key] = promise;
+  return promise;
+}
+async function getPOIs(kind){
+  const buckets = await getAllPOIs();
+  return buckets[kind] || [];
 }
 function renderPOIs(items, kind){
   state.allPOIs = items;
@@ -1088,7 +1056,7 @@ function drawPOIs(kind){
       const r = +b.dataset.r;
       if(r === state.radiusM) return;
       state.radiusM = r;
-      for(const k of Object.keys(state.cache)) if(k.startsWith('poi_')) delete state.cache[k];
+      for(const k of Object.keys(state.cache)) if(k.startsWith('poiAll_')) delete state.cache[k];
       renderTab(kind);
     });
   });
