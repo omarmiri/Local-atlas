@@ -984,6 +984,83 @@ async function getPOIs(kind){
   const buckets = await getAllPOIs();
   return buckets[kind] || [];
 }
+/* Best-effort parser for common OSM opening_hours formats.
+   Returns true / false, or null when the format is beyond it (no badge shown).
+   Uses the viewer's clock — close enough for same-region browsing. */
+const DAY_IDX = { su:0, mo:1, tu:2, we:3, th:4, fr:5, sa:6 };
+function isOpenNow(spec){
+  if(!spec) return null;
+  try{
+    spec = spec.trim();
+    if(spec === '24/7') return true;
+    const now = new Date();
+    const today = now.getDay();
+    const mins = now.getHours()*60 + now.getMinutes();
+    let verdict = null;
+    for(let rule of spec.split(';')){
+      rule = rule.trim();
+      if(!rule || /PH|SH/i.test(rule)) continue;               // skip holiday rules
+      const closed = /\b(off|closed)\b/i.test(rule);
+      const dayPart = rule.match(/^([A-Za-z ,\-]+?)(?=\s+\d|\s*$|\s+off|\s+closed)/);
+      let days = null;                                          // null = every day
+      if(dayPart && /^[A-Za-z ,\-]+$/.test(dayPart[1].trim()) ){
+        days = new Set();
+        for(const tok of dayPart[1].split(',').map(s=>s.trim().toLowerCase()).filter(Boolean)){
+          const range = tok.split('-').map(s=>s.slice(0,2));
+          if(!(range[0] in DAY_IDX)) { days = null; break; }
+          if(range.length === 2 && range[1] in DAY_IDX){
+            let d = DAY_IDX[range[0]];
+            days.add(d);
+            while(d !== DAY_IDX[range[1]]){ d = (d+1)%7; days.add(d); }
+          } else days.add(DAY_IDX[range[0]]);
+        }
+      }
+      const applies = days === null || days.has(today);
+      if(!applies) continue;
+      if(closed){ verdict = false; continue; }
+      const times = [...rule.matchAll(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g)];
+      if(!times.length) continue;
+      let open = false;
+      for(const t of times){
+        const a = +t[1]*60 + +t[2], b = +t[3]*60 + +t[4];
+        if(b >= a ? (mins >= a && mins < b) : (mins >= a || mins < b)) open = true;  // handles past-midnight
+      }
+      verdict = open;
+    }
+    return verdict;
+  }catch(e){ return null; }
+}
+function openBadge(hours){
+  const v = isOpenNow(hours);
+  if(v === true)  return `<span class="openbadge open">Open</span>`;
+  if(v === false) return `<span class="openbadge closed">Closed</span>`;
+  return '';
+}
+function directionsURL(it){
+  return `https://www.google.com/maps/dir/?api=1&destination=${it.lat},${it.lon}`;
+}
+function gmapsURL(it){
+  return 'https://www.google.com/maps/search/?api=1&query=' +
+    encodeURIComponent(`${it.name} ${state.place.name}`);
+}
+function poiDetailHTML(it, idx){
+  const rows = [];
+  if(it.cuisine) rows.push(`<div class="row">Cuisine: ${esc(it.cuisine)}</div>`);
+  if(it.hours)   rows.push(`<div class="row">Hours: ${esc(it.hours)}</div>`);
+  if(it.phone)   rows.push(`<div class="row">${esc(it.phone)}</div>`);
+  const acts = [
+    `<a href="${gmapsURL(it)}" target="_blank" rel="noopener">Google Maps</a>`,
+    `<a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>`];
+  if(it.website){
+    acts.push(`<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>`);
+    acts.push(`<button class="scan-deals" data-idx="${idx}">Scan site for deals</button>`);
+  }else{
+    acts.push(`<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>`);
+  }
+  return `<div class="poi-desc" id="desc-${idx}"></div>` + rows.join('') +
+    `<div class="poi-actions chiprow" style="margin:8px 0 0">${acts.join('')}</div>` +
+    `<div class="deal-results" id="deals-${idx}"></div>`;
+}
 function renderPOIs(items, kind){
   state.allPOIs = items;
   drawPOIs(kind);
