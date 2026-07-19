@@ -85,6 +85,13 @@
     border-radius:99px;padding:6px 12px;cursor:pointer;
   }
   .chiprow button.scan-deals:hover{filter:brightness(1.15)}
+  .filterrow{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+  .filterrow button{
+    border:1.5px solid var(--line);background:#fff;color:var(--ink-soft);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.7rem;
+    text-transform:capitalize;border-radius:99px;padding:4px 10px;cursor:pointer;
+  }
+  .filterrow button[aria-pressed="true"]{border-color:var(--sign-green);background:var(--sign-green);color:#fff}
   .deal-snip{
     font-size:.8rem;line-height:1.5;color:var(--ink);
     border-left:3px solid var(--sun);background:#FFFBEE;
@@ -110,7 +117,36 @@
   }
   .brand h1{font-size:1.05rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
   .brand span{font-size:.7rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--sun)}
-  .searchrow{display:flex;gap:8px;margin-top:10px}
+  .searchrow{display:flex;gap:8px;margin-top:10px;position:relative}
+  .suggest{
+    position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:50;
+    background:#fff;border:2px solid var(--sign-green-deep);border-radius:9px;
+    overflow:hidden;display:none;box-shadow:var(--shadow);
+  }
+  .suggest.show{display:block}
+  .suggest button{
+    display:block;width:100%;text-align:left;border:0;background:#fff;cursor:pointer;
+    font:inherit;font-size:.88rem;color:var(--ink);padding:9px 12px;
+    border-bottom:1px solid var(--line);
+  }
+  .suggest button:last-child{border-bottom:none}
+  .suggest button:hover,.suggest button.sel{background:#EAF3EE}
+  .suggest button small{color:var(--ink-soft);margin-left:6px}
+  .recents{display:flex;gap:6px;overflow-x:auto;margin-top:8px;scrollbar-width:none}
+  .recents::-webkit-scrollbar{display:none}
+  .recents button{
+    flex:0 0 auto;border:1.5px solid rgba(255,255,255,.4);background:transparent;color:#EAF3EE;
+    font-family:'Overpass',sans-serif;font-weight:600;font-size:.72rem;
+    border-radius:99px;padding:4px 11px;cursor:pointer;white-space:nowrap;
+  }
+  .recents button:hover{border-color:#fff;color:#fff}
+  .openbadge{
+    display:inline-block;font-family:'Overpass',sans-serif;font-weight:700;
+    font-size:.62rem;letter-spacing:.04em;text-transform:uppercase;
+    border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:1px;
+  }
+  .openbadge.open{background:#E2F2E7;color:var(--sign-green)}
+  .openbadge.closed{background:#FBE9E5;color:var(--alert)}
   .searchrow input{
     flex:1;min-width:0;
     border:2px solid var(--sign-green-deep);
@@ -351,10 +387,12 @@
       <input id="q" type="text" placeholder="ZIP / postal code or city" autocomplete="off"
              aria-label="Search by ZIP code, postal code, or city">
       <button class="btn" id="goBtn">Go</button>
+      <div class="suggest" id="suggest" role="listbox"></div>
     </div>
     <div class="locrow">
       <button class="btn ghost" id="geoBtn">⌖ Use my location</button>
     </div>
+    <div class="recents" id="recents"></div>
     <div class="search-msg" id="searchMsg" role="status"></div>
   </div>
 
@@ -370,6 +408,7 @@
     <button class="tab" role="tab" data-tab="services" aria-selected="false">Services</button>
     <button class="tab" role="tab" data-tab="attractions" aria-selected="false">See &amp; Do</button>
     <button class="tab" role="tab" data-tab="food" aria-selected="false">Eat</button>
+    <button class="tab" role="tab" data-tab="kids" aria-selected="false">Kids</button>
     <button class="tab" role="tab" data-tab="social" aria-selected="false">Social</button>
   </div>
 
@@ -424,24 +463,57 @@ const poiLayer   = L.layerGroup().addTo(map);
    Inside a claude.ai artifact, window.storage persists across sessions.
    Deployed as a normal website, we fall back to the browser's localStorage. */
 const IN_CLAUDE_ARTIFACT = typeof window.storage !== 'undefined';
-async function saveLast(place){
-  const v = JSON.stringify(place);
-  try{
-    if(IN_CLAUDE_ARTIFACT){ await window.storage.set('last-place', v); return; }
-  }catch(e){}
-  try{ localStorage.setItem('last-place', v); }catch(e){}
+async function storeSet(key, val){
+  const v = JSON.stringify(val);
+  try{ if(IN_CLAUDE_ARTIFACT){ await window.storage.set(key, v); return; } }catch(e){}
+  try{ localStorage.setItem(key, v); }catch(e){}
 }
-async function loadLast(){
+async function storeGet(key){
   try{
     if(IN_CLAUDE_ARTIFACT){
-      const r = await window.storage.get('last-place');
+      const r = await window.storage.get(key);
       if(r && r.value) return JSON.parse(r.value);
     }
   }catch(e){}
   try{
-    const v = localStorage.getItem('last-place');
+    const v = localStorage.getItem(key);
     return v ? JSON.parse(v) : null;
   }catch(e){ return null; }
+}
+const saveLast = place => storeSet('last-place', place);
+const loadLast = () => storeGet('last-place');
+
+/* recent places (last 5) */
+async function pushRecent(place){
+  let list = (await storeGet('recent-places')) || [];
+  list = [place, ...list.filter(p=>p.name !== place.name)].slice(0,5);
+  await storeSet('recent-places', list);
+  renderRecents(list);
+}
+function renderRecents(list){
+  const el = $('recents');
+  el.innerHTML = (list||[]).slice(1).map((p,i)=>
+    `<button data-i="${i+1}">${esc(p.name)}</button>`).join('');
+  el.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      const l = (await storeGet('recent-places'))||[];
+      const p = l[+b.dataset.i];
+      if(p) loadPlace(p);
+    });
+  });
+}
+
+/* shareable URLs — the current place lives in the address bar */
+function updateHash(place){
+  try{
+    history.replaceState(null, '', '#p=' + [place.lat.toFixed(4), place.lon.toFixed(4),
+      place.country||'US', encodeURIComponent(place.name)].join(','));
+  }catch(e){}
+}
+function parseHash(){
+  const m = location.hash.match(/^#p=(-?[\d.]+),(-?[\d.]+),(\w\w),(.+)$/);
+  if(!m) return null;
+  return { lat:+m[1], lon:+m[2], country:m[3], name:decodeURIComponent(m[4]) };
 }
 
 /* ---------------- helpers ---------------- */
@@ -547,6 +619,8 @@ async function loadPlace(place, { fly=true } = {}){
   state.cache = {};
   const token = ++state.reqToken;
   saveLast(place);
+  updateHash(place);
+  pushRecent(place);
 
   $('placeBadge').style.display = 'block';
   $('placeName').textContent = place.name;
@@ -612,7 +686,8 @@ async function renderTab(name){
       if(token!==state.reqToken || state.tab!=='social') return;
       renderSocial(s);
     }else{
-      const labels = { services:'public services', attractions:'things to see', food:'places to eat' };
+      const labels = { services:'public services', attractions:'things to see', food:'places to eat', kids:'kids activities' };
+      state.poiFilter = null;
       showLoading('Finding '+labels[name]+' nearby…');
       const pois = await getPOIs(name, token);
       if(token!==state.reqToken || state.tab!==name) return;
@@ -756,7 +831,14 @@ const POI_FILTERS = {
     way["leisure"="park"]["name"](around:R,LAT,LON);`,
   food: `
     node["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream|bakery)$"](around:R,LAT,LON);
-    way["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream)$"](around:R,LAT,LON);`
+    way["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream)$"](around:R,LAT,LON);`,
+  kids: `
+    node["leisure"~"^(playground|water_park|amusement_arcade|trampoline_park|ice_rink|miniature_golf|bowling_alley|swimming_pool)$"](around:R,LAT,LON);
+    way["leisure"~"^(playground|water_park|amusement_arcade|trampoline_park|ice_rink|miniature_golf|bowling_alley|swimming_pool)$"](around:R,LAT,LON);
+    node["tourism"~"^(zoo|theme_park|aquarium)$"](around:R,LAT,LON);
+    way["tourism"~"^(zoo|theme_park|aquarium)$"](around:R,LAT,LON);
+    node["amenity"~"^(cinema|library)$"](around:R,LAT,LON);
+    way["amenity"~"^(cinema|library)$"](around:R,LAT,LON);`
 };
 /* Overpass is a shared free service: single instances rate-limit quickly,
    which is why one tab can succeed and the next one fail. Rotate across
@@ -798,7 +880,8 @@ async function getPOIs(kind){
   const items = (d.elements||[])
     .map(e=>{
       const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon;
-      const name = e.tags?.name;
+      let name = e.tags?.name;
+      if(!name && kind==='kids' && e.tags?.leisure==='playground') name = 'Playground';
       if(!name || la==null) return null;
       const kindLabel = (e.tags.amenity || e.tags.tourism || e.tags.leisure || '').replaceAll('_',' ');
       return { name, kind:kindLabel, lat:la, lon:lo, dist:haversine(lat,lon,la,lo),
@@ -815,12 +898,67 @@ async function getPOIs(kind){
   state.cache[key] = out;
   return out;
 }
+/* Best-effort parser for common OSM opening_hours formats.
+   Returns true / false, or null when the format is beyond it (no badge shown).
+   Uses the viewer's clock — close enough for same-region browsing. */
+const DAY_IDX = { su:0, mo:1, tu:2, we:3, th:4, fr:5, sa:6 };
+function isOpenNow(spec){
+  if(!spec) return null;
+  try{
+    spec = spec.trim();
+    if(spec === '24/7') return true;
+    const now = new Date();
+    const today = now.getDay();
+    const mins = now.getHours()*60 + now.getMinutes();
+    let verdict = null;
+    for(let rule of spec.split(';')){
+      rule = rule.trim();
+      if(!rule || /PH|SH/i.test(rule)) continue;               // skip holiday rules
+      const closed = /\b(off|closed)\b/i.test(rule);
+      const dayPart = rule.match(/^([A-Za-z ,\-]+?)(?=\s+\d|\s*$|\s+off|\s+closed)/);
+      let days = null;                                          // null = every day
+      if(dayPart && /^[A-Za-z ,\-]+$/.test(dayPart[1].trim()) ){
+        days = new Set();
+        for(const tok of dayPart[1].split(',').map(s=>s.trim().toLowerCase()).filter(Boolean)){
+          const range = tok.split('-').map(s=>s.slice(0,2));
+          if(!(range[0] in DAY_IDX)) { days = null; break; }
+          if(range.length === 2 && range[1] in DAY_IDX){
+            let d = DAY_IDX[range[0]];
+            days.add(d);
+            while(d !== DAY_IDX[range[1]]){ d = (d+1)%7; days.add(d); }
+          } else days.add(DAY_IDX[range[0]]);
+        }
+      }
+      const applies = days === null || days.has(today);
+      if(!applies) continue;
+      if(closed){ verdict = false; continue; }
+      const times = [...rule.matchAll(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g)];
+      if(!times.length) continue;
+      let open = false;
+      for(const t of times){
+        const a = +t[1]*60 + +t[2], b = +t[3]*60 + +t[4];
+        if(b >= a ? (mins >= a && mins < b) : (mins >= a || mins < b)) open = true;  // handles past-midnight
+      }
+      verdict = open;
+    }
+    return verdict;
+  }catch(e){ return null; }
+}
+function openBadge(hours){
+  const v = isOpenNow(hours);
+  if(v === true)  return `<span class="openbadge open">Open</span>`;
+  if(v === false) return `<span class="openbadge closed">Closed</span>`;
+  return '';
+}
+function directionsURL(it){
+  return `https://www.google.com/maps/dir/?api=1&destination=${it.lat},${it.lon}`;
+}
 function poiDetailHTML(it, idx){
   const rows = [];
   if(it.cuisine) rows.push(`<div class="row">Cuisine: ${esc(it.cuisine)}</div>`);
   if(it.hours)   rows.push(`<div class="row">Hours: ${esc(it.hours)}</div>`);
   if(it.phone)   rows.push(`<div class="row">${esc(it.phone)}</div>`);
-  const acts = [];
+  const acts = [`<a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>`];
   if(it.website){
     acts.push(`<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>`);
     acts.push(`<button class="scan-deals" data-idx="${idx}">Scan site for deals</button>`);
@@ -832,25 +970,45 @@ function poiDetailHTML(it, idx){
     `<div class="deal-results" id="deals-${idx}"></div>`;
 }
 function renderPOIs(items, kind){
+  state.allPOIs = items;
+  drawPOIs(kind);
+}
+function drawPOIs(kind){
   poiLayer.clearLayers();
-  if(!items.length){
+  const all = state.allPOIs || [];
+  if(!all.length){
     contentEl.innerHTML = `<div class="empty-state"><p>Nothing mapped in this category within a few miles.
       Try a larger town nearby, or a different category.</p></div>`;
     return;
   }
+  const filterable = (kind==='attractions' || kind==='kids');
+  const items = (filterable && state.poiFilter)
+    ? all.filter(i=>i.kind===state.poiFilter) : all;
+  state.currentPOIs = items;
+
   let html = `
     <div class="viewtoggle" role="group" aria-label="List or map view">
       <button aria-pressed="true">List</button>
       <button aria-pressed="false">Map</button>
-    </div>
-    <div class="sec-note">${items.length} places within ~4.5 miles · tap an entry for details · all pinned on the map</div>`;
+    </div>`;
+  if(filterable){
+    const counts = {};
+    for(const i of all) counts[i.kind] = (counts[i.kind]||0)+1;
+    const kinds = Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+    if(kinds.length > 1){
+      html += `<div class="filterrow" role="group" aria-label="Filter by category">
+        <button data-k="" aria-pressed="${!state.poiFilter}">All (${all.length})</button>` +
+        kinds.map(k=>`<button data-k="${esc(k)}" aria-pressed="${state.poiFilter===k}">${esc(k)} (${counts[k]})</button>`).join('') +
+        `</div>`;
+    }
+  }
+  html += `<div class="sec-note">${items.length} places within ~4.5 miles · tap an entry for details · all pinned on the map</div>`;
   let idx = 0;
-  state.currentPOIs = items;
   for(const it of items){
     html += `
       <details class="poi">
         <summary>
-          <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}</div></div>
+          <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}${openBadge(it.hours)}</div></div>
           <div class="dist">${it.dist.toFixed(1)} mi</div>
         </summary>
         <div class="poi-more">${poiDetailHTML(it, idx++)}</div>
@@ -859,14 +1017,18 @@ function renderPOIs(items, kind){
       radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9
     }).addTo(poiLayer)
       .bindPopup(
-        `<strong>${esc(it.name)}</strong><br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
+        `<strong>${esc(it.name)}</strong>${openBadge(it.hours)}<br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
         (it.hours ? `<br><small>${esc(it.hours)}</small>` : '') +
-        (it.website ? `<br><a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a> — open its list entry to scan for deals` : ''));
+        `<br><a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>` +
+        (it.website ? ` · <a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>` : ''));
   }
   contentEl.innerHTML = html;
   const [listBtn, mapBtn] = contentEl.querySelectorAll('.viewtoggle button');
-  mapBtn.addEventListener('click', ()=>{ hidePanel(); map.flyToBounds(getPOIBounds(items), {padding:[40,40], maxZoom:15}); });
+  mapBtn.addEventListener('click', ()=>{ hidePanel(); map.flyToBounds(getPOIBounds(items.length?items:all), {padding:[40,40], maxZoom:15}); });
   listBtn.addEventListener('click', showPanel);
+  contentEl.querySelectorAll('.filterrow button').forEach(b=>{
+    b.addEventListener('click', ()=>{ state.poiFilter = b.dataset.k || null; drawPOIs(kind); });
+  });
 }
 function getPOIBounds(items){
   return L.latLngBounds(items.map(i=>[i.lat, i.lon]).concat([[state.place.lat, state.place.lon]]));
@@ -1202,7 +1364,54 @@ async function runSearch(){
   }catch(e){ msg(e.message, true); }
 }
 $('goBtn').addEventListener('click', runSearch);
-$('q').addEventListener('keydown', e => { if(e.key==='Enter') runSearch(); });
+
+/* ---------------- search autocomplete ---------------- */
+const suggestEl = $('suggest');
+let sTimer=null, sItems=[], sSel=-1;
+function hideSuggest(){ suggestEl.classList.remove('show'); sItems=[]; sSel=-1; }
+function pickSuggest(i){
+  const r = sItems[i]; if(!r) return;
+  hideSuggest(); $('q').value=''; msg('');
+  const abbr = REGION_NAME_TO_ABBR[(r.admin1||'').toLowerCase()] || r.admin1 || '';
+  loadPlace({ lat:r.latitude, lon:r.longitude, country:r.country_code,
+              name: abbr ? `${r.name}, ${abbr}` : r.name });
+}
+$('q').addEventListener('input', ()=>{
+  clearTimeout(sTimer);
+  const v = $('q').value.trim();
+  // postal/ZIP input skips suggestions
+  if(v.length<3 || /^\d/.test(v) || /^[A-Za-z]\d/.test(v.replace(/\s/g,''))){ hideSuggest(); return; }
+  sTimer = setTimeout(async ()=>{
+    try{
+      const d = await fetchJSON('https://geocoding-api.open-meteo.com/v1/search?count=8&language=en&format=json&name='+encodeURIComponent(v));
+      sItems = (d.results||[]).filter(r=>r.country_code==='US'||r.country_code==='CA').slice(0,6);
+      if(!sItems.length){ hideSuggest(); return; }
+      sSel = -1;
+      suggestEl.innerHTML = sItems.map((r,i)=>{
+        const abbr = REGION_NAME_TO_ABBR[(r.admin1||'').toLowerCase()] || r.admin1 || '';
+        return `<button data-i="${i}" role="option">${esc(r.name)}<small>${esc(abbr)} · ${r.country_code}</small></button>`;
+      }).join('');
+      suggestEl.classList.add('show');
+      suggestEl.querySelectorAll('button').forEach(b=>
+        b.addEventListener('mousedown', ev=>{ ev.preventDefault(); pickSuggest(+b.dataset.i); }));
+    }catch(e){ hideSuggest(); }
+  }, 300);
+});
+$('q').addEventListener('keydown', e=>{
+  if(suggestEl.classList.contains('show')){
+    const btns = suggestEl.querySelectorAll('button');
+    if(e.key==='ArrowDown' || e.key==='ArrowUp'){
+      e.preventDefault();
+      sSel = (sSel + (e.key==='ArrowDown'?1:-1) + btns.length) % btns.length;
+      btns.forEach((b,i)=>b.classList.toggle('sel', i===sSel));
+      return;
+    }
+    if(e.key==='Enter' && sSel>=0){ e.preventDefault(); pickSuggest(sSel); return; }
+    if(e.key==='Escape'){ hideSuggest(); return; }
+  }
+  if(e.key==='Enter'){ hideSuggest(); runSearch(); }
+});
+document.addEventListener('click', e=>{ if(!e.target.closest('.searchrow')) hideSuggest(); });
 
 async function locateByIP(){
   // approximate location from the network address — works even where the
@@ -1263,9 +1472,11 @@ $('reopenBtn').addEventListener('click', showPanel);
 /* ---------------- mobile sheet toggle ---------------- */
 $('sheetToggle').addEventListener('click', ()=> $('panel').classList.toggle('collapsed'));
 
-/* ---------------- boot: restore last place ---------------- */
+/* ---------------- boot: URL hash first, then last saved place ---------------- */
 (async ()=>{
-  const last = await loadLast();
+  storeGet('recent-places').then(l=>{ if(l) renderRecents(l); });
+  const fromHash = parseHash();
+  const last = fromHash || await loadLast();
   if(last && typeof last.lat==='number'){
     if(!last.country) last.country = 'US';
     loadPlace(last, { fly:false });

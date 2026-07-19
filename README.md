@@ -2,7 +2,7 @@
 
 A single-file web app for exploring any US or Canadian town: pick a place by ZIP, city, or
 current location, and get a zoomed-in map with weather, active weather alerts,
-local news, public services, attractions, and places to eat. Zoom out and tap
+local news, public services, attractions, kids activities, and places to eat. Zoom out and tap
 any nearby town marker to explore it the same way. Your last place is
 remembered between visits.
 
