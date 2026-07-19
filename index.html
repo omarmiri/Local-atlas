@@ -477,10 +477,22 @@ const contentEl = $('content');
 const state = {
   place: null,          // {lat, lon, name}
   radiusM: 7000,        // POI search radius in meters (user-adjustable)
+  backendP: null,       // resolves {ok, fsq} — whether our Node backend is present
   tab: 'weather',
   cache: {},            // per-place fetched data
   reqToken: 0,          // invalidates stale fetches when place changes
 };
+
+/* is our own backend serving this page? (absent on claude.ai / pure static) */
+state.backendP = (async ()=>{
+  try{
+    const ctl = new AbortController();
+    setTimeout(()=>ctl.abort(), 4000);
+    const r = await fetch('/api/health', { signal: ctl.signal });
+    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq }; }
+  }catch(e){}
+  return { ok:false, fsq:false };
+})();
 
 /* ---------------- map ---------------- */
 const map = L.map('map', { zoomControl:false }).setView([45.5, -96.5], 4);
@@ -980,13 +992,20 @@ function getAllPOIs(){
   const { lat, lon } = state.place;
   const promise = (async ()=>{
     // warm local cache: same spot + radius within 24 h loads instantly
-    const lsKey = `poiv3:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
+    const lsKey = `poiv4:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
     try{
       const c = JSON.parse(localStorage.getItem(lsKey) || 'null');
       if(c && Date.now() - c.t < 864e5) return c.b;
     }catch(e){}
-    const d = await overpassQuery(buildCombinedQuery(lat, lon, state.radiusM));
-    const b = bucketize(d.elements);
+    const be = await state.backendP;
+    const tasks = [
+      overpassQuery(buildCombinedQuery(lat, lon, state.radiusM))
+        .then(d=>bucketize(d.elements)).catch(()=>null)
+    ];
+    if(be.fsq) tasks.push(fetchFSQBuckets(lat, lon, state.radiusM).catch(()=>null));
+    const [osmB, fsqB] = await Promise.all(tasks);
+    if(!osmB && !fsqB) throw new Error('places services unavailable');
+    const b = mergeBuckets(osmB, fsqB);
     try{ localStorage.setItem(lsKey, JSON.stringify({ t:Date.now(), b })); }catch(e){}
     return b;
   })();
@@ -997,6 +1016,35 @@ function getAllPOIs(){
 async function getPOIs(kind){
   const buckets = await getAllPOIs();
   return buckets[kind] || [];
+}
+async function fetchFSQBuckets(lat, lon, r){
+  const cats = ['services','attractions','food','shopping','kids'];
+  const out = {};
+  await Promise.all(cats.map(async c=>{
+    try{
+      const res = await fetchT(`/api/places?lat=${lat}&lon=${lon}&radius=${r}&category=${c}`, {}, 12000);
+      if(!res.ok) throw new Error();
+      out[c] = (await res.json()).items || [];
+    }catch(e){ out[c] = []; }
+  }));
+  return out;
+}
+const normName = n => n.toLowerCase().replace(/[^a-z0-9]/g,'');
+function mergeBuckets(osmB, fsqB){
+  const cats = ['services','attractions','food','kids','shopping'];
+  const b = {};
+  for(const c of cats){
+    const merged = [...(osmB?.[c]||[])];
+    const seen = new Set(merged.map(i=>normName(i.name)));
+    for(const it of (fsqB?.[c]||[])){
+      const k = normName(it.name);
+      if(seen.has(k)) continue;
+      seen.add(k); merged.push(it);
+    }
+    merged.sort((a,x)=>a.dist-x.dist);
+    b[c] = merged.slice(0, 80);
+  }
+  return b;
 }
 /* Best-effort parser for common OSM opening_hours formats.
    Returns true / false, or null when the format is beyond it (no badge shown).
@@ -1044,8 +1092,8 @@ function isOpenNow(spec){
     return verdict;
   }catch(e){ return null; }
 }
-function openBadge(hours){
-  const v = isOpenNow(hours);
+function openBadge(hours, openNow){
+  const v = (openNow === true || openNow === false) ? openNow : isOpenNow(hours);
   if(v === true)  return `<span class="openbadge open">Open</span>`;
   if(v === false) return `<span class="openbadge closed">Closed</span>`;
   return '';
@@ -1119,7 +1167,7 @@ function drawPOIs(kind){
     html += `
       <details class="poi">
         <summary>
-          <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}${openBadge(it.hours)}</div></div>
+          <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}${openBadge(it.hours, it.openNow)}</div></div>
           <div class="dist">${it.dist.toFixed(1)} mi</div>
         </summary>
         <div class="poi-more">${poiDetailHTML(it, idx++)}</div>
@@ -1129,7 +1177,7 @@ function drawPOIs(kind){
       bubblingMouseEvents:false
     }).addTo(poiLayer)
       .bindPopup(
-        `<strong>${esc(it.name)}</strong>${openBadge(it.hours)}<br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
+        `<strong>${esc(it.name)}</strong>${openBadge(it.hours, it.openNow)}<br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
         (it.hours ? `<br><small>${esc(it.hours)}</small>` : '') +
         `<br><a href="${gmapsURL(it)}" target="_blank" rel="noopener">Google Maps</a> · ` +
         `<a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>` +
@@ -1330,6 +1378,11 @@ async function getSocial(){
     return posts;
   };
   const routes = [
+    async ()=>{ const be = await state.backendP;
+                if(!be.ok) throw new Error('no backend');
+                const r = await fetchT('/api/reddit?q='+encodeURIComponent(q), {}, 10000);
+                if(!r.ok) throw new Error('HTTP '+r.status);
+                return asPosts(await r.text()); },
     async ()=>{ const r = await fetchT(jsonUrl, {}, 8000);
                 if(!r.ok) throw new Error('HTTP '+r.status);
                 return asPosts(await r.text()); },
@@ -1394,10 +1447,13 @@ async function getNews(){
 }
 /* shared CORS-proxy cascade for feeds that don't allow browser requests */
 async function proxiedText(url){
-  const routes = [
+  const be = await state.backendP;
+  const routes = [];
+  if(be.ok) routes.push('/api/fetch?url=' + encodeURIComponent(url));
+  routes.push(
     'https://corsproxy.io/?url=' + encodeURIComponent(url),
     'https://api.allorigins.win/raw?url=' + encodeURIComponent(url)
-  ];
+  );
   let lastErr = new Error('proxy routes unavailable');
   for(const r of routes){
     try{
@@ -1424,8 +1480,17 @@ async function getNewsRSS(){
       src:   it.querySelector('source')?.textContent || ''
     }));
   };
-  // free CORS routes come and go — proxy cascade first, rss2json as backup
+  // our backend first (server-side fetch, shared cache), then public routes
   const routes = [
+    async ()=>{
+      const be = await state.backendP;
+      if(!be.ok) throw new Error('no backend');
+      const r = await fetchT(`/api/news?q=${encodeURIComponent(city.split(',')[0])}&country=${cc}`, {}, 10000);
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const j = await r.json();
+      if(!j.items?.length) throw new Error('empty');
+      return j.items.map(it=>({ title:it.title, link:it.link, pub:it.pub, src:it.src }));
+    },
     async ()=> parseXML(await proxiedText(feed)),
     async ()=>{ const r = await fetchT('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feed), {}, 10000);
                 if(!r.ok) throw new Error('HTTP '+r.status);

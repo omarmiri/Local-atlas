@@ -20,14 +20,17 @@ remembered between visits.
 | Local news | Google News RSS (deployed) or Claude web search (inside claude.ai) |
 | Last-place memory | localStorage (deployed) or artifact storage (inside claude.ai) |
 
-## Deploy on Render
+## Deploy on Render (Node Web Service)
 
-1. Render dashboard → **New → Static Site**
-2. Connect this repo
-3. Build command: *(leave empty)* — Publish directory: `.`
-4. Deploy. That's it — there is no build step and no server.
+1. Render dashboard → **New → Web Service** → connect this repo
+2. Runtime: Node · Build command: `npm install` · Start command: `npm start`
+3. Environment tab → add `FSQ_API_KEY` (your Foursquare Places API key).
+   Env vars are encrypted, injected at runtime, and never appear in the repo.
+4. Deploy.
 
-`render.yaml` is included, so **New → Blueprint** pointed at this repo works too.
+Without `FSQ_API_KEY`, everything still works from OpenStreetMap — Foursquare
+just adds coverage. The server also proxies news, Reddit, and deal-scans
+(no more public CORS proxies) and keeps a shared response cache.
 
 ## Run locally
 

@@ -1,6 +1,9 @@
 services:
   - type: web
     name: local-atlas
-    runtime: static
-    buildCommand: ""
-    staticPublishPath: .
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: FSQ_API_KEY
+        sync: false
