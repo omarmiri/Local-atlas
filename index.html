@@ -606,6 +606,35 @@ const POI_FILTERS = {
     node["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream|bakery)$"](around:R,LAT,LON);
     way["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream)$"](around:R,LAT,LON);`
 };
+/* Overpass is a shared free service: single instances rate-limit quickly,
+   which is why one tab can succeed and the next one fail. Rotate across
+   public mirrors and run queries one at a time. */
+const OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter'
+];
+let overpassChain = Promise.resolve();
+function overpassQuery(body){
+  const run = async ()=>{
+    let lastErr = new Error('places service unavailable');
+    for(const url of OVERPASS_MIRRORS){
+      try{
+        const r = await fetch(url, {
+          method:'POST', body:'data='+encodeURIComponent(body),
+          headers:{'Content-Type':'application/x-www-form-urlencoded'}
+        });
+        if(!r.ok){ lastErr = new Error('places server busy, HTTP '+r.status); continue; }
+        return await r.json();
+      }catch(e){ lastErr = e; }
+    }
+    throw lastErr;
+  };
+  const p = overpassChain.then(run, run);
+  overpassChain = p.catch(()=>{});
+  return p;
+}
+
 async function getPOIs(kind){
   const key = 'poi_'+kind;
   if(state.cache[key]) return state.cache[key];
@@ -613,10 +642,7 @@ async function getPOIs(kind){
   const body = '[out:json][timeout:25];(' +
     POI_FILTERS[kind].replaceAll('R','7000').replaceAll('LAT',lat).replaceAll('LON',lon) +
     ');out center 60;';
-  const d = await fetchJSON('https://overpass-api.de/api/interpreter', {
-    method:'POST', body:'data='+encodeURIComponent(body),
-    headers:{'Content-Type':'application/x-www-form-urlencoded'}
-  });
+  const d = await overpassQuery(body);
   const items = (d.elements||[])
     .map(e=>{
       const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon;
@@ -666,20 +692,41 @@ async function getNews(){
 async function getNewsRSS(){
   const city = state.place.name;
   const feed = `https://news.google.com/rss/search?q=${encodeURIComponent('"'+city.split(',')[0]+'" local news')}&hl=en-US&gl=US&ceid=US:en`;
-  const prox = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(feed);
-  const r = await fetch(prox);
-  if(!r.ok) throw new Error('news feed unavailable');
-  const xml = new DOMParser().parseFromString(await r.text(), 'text/xml');
-  const items = [...xml.querySelectorAll('item')].slice(0, 8).map(it=>{
-    const rawTitle = it.querySelector('title')?.textContent || '';
-    const src = it.querySelector('source')?.textContent
-             || (rawTitle.includes(' - ') ? rawTitle.split(' - ').pop() : '');
-    const title = rawTitle.includes(' - ') ? rawTitle.split(' - ').slice(0,-1).join(' - ') : rawTitle;
-    const when = it.querySelector('pubDate')?.textContent;
+  const parseXML = txt => {
+    const xml = new DOMParser().parseFromString(txt, 'text/xml');
+    const list = [...xml.querySelectorAll('item')];
+    if(!list.length) throw new Error('empty feed');
+    return list.map(it=>({
+      title: it.querySelector('title')?.textContent || '',
+      link:  it.querySelector('link')?.textContent || '',
+      pub:   it.querySelector('pubDate')?.textContent || '',
+      src:   it.querySelector('source')?.textContent || ''
+    }));
+  };
+  // free CORS routes come and go — try three different ones
+  const routes = [
+    async ()=>{ const r = await fetch('https://corsproxy.io/?url='+encodeURIComponent(feed));
+                if(!r.ok) throw new Error('HTTP '+r.status); return parseXML(await r.text()); },
+    async ()=>{ const r = await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(feed));
+                if(!r.ok) throw new Error('HTTP '+r.status); return parseXML(await r.text()); },
+    async ()=>{ const r = await fetch('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feed));
+                if(!r.ok) throw new Error('HTTP '+r.status);
+                const d = await r.json();
+                if(d.status!=='ok' || !d.items?.length) throw new Error('feed unavailable');
+                return d.items.map(it=>({ title:it.title, link:it.link, pub:it.pubDate, src:'' })); }
+  ];
+  let raw = null, lastErr;
+  for(const route of routes){
+    try{ raw = await route(); break; }catch(e){ lastErr = e; }
+  }
+  if(!raw) throw lastErr || new Error('news routes unavailable');
+  const items = raw.slice(0, 8).map(it=>{
+    const src = it.src || (it.title.includes(' - ') ? it.title.split(' - ').pop() : '');
+    const title = it.title.includes(' - ') ? it.title.split(' - ').slice(0,-1).join(' - ') : it.title;
     return {
       title, source: src,
-      summary: when ? new Date(when).toLocaleString() : '',
-      link: it.querySelector('link')?.textContent || ''
+      summary: it.pub ? new Date(it.pub).toLocaleString() : '',
+      link: it.link || ''
     };
   });
   state.cache.news = items;
@@ -749,10 +796,7 @@ async function loadTowns(){
   const placeTypes = z <= 7 ? 'city' : 'city|town';
   const body = `[out:json][timeout:20];node["place"~"^(${placeTypes})$"](${bbox});out 50;`;
   try{
-    const d = await fetchJSON('https://overpass-api.de/api/interpreter', {
-      method:'POST', body:'data='+encodeURIComponent(body),
-      headers:{'Content-Type':'application/x-www-form-urlencoded'}
-    });
+    const d = await overpassQuery(body);
     townLayer.clearLayers();
     for(const e of (d.elements||[])){
       if(!e.tags?.name) continue;
