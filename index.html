@@ -1507,8 +1507,7 @@ async function getEvents(){
 }
 function renderEvents(evs){
   if(evs === null){
-    contentEl.innerHTML = `<div class="empty-state"><p>Events need a free Ticketmaster API key on the server —
-      add <b>TICKETMASTER_API_KEY</b> in Render's Environment tab.</p></div>`;
+    contentEl.innerHTML = `<div class="empty-state"><p>Event listings aren't available right now — check back soon.</p></div>`;
     return;
   }
   if(!evs.length){
@@ -1562,8 +1561,9 @@ async function getBrief(){
 }
 function renderBrief(text){
   if(text === null){
-    contentEl.innerHTML = `<div class="empty-state"><p>The Brief needs a Gemini API key on the server —
-      add <b>GEMINI_API_KEY</b> in Render's Environment tab.</p></div>`;
+    // no AI configured — show the plain data digest instead of an error
+    renderBriefFallback();
+    return;
     return;
   }
   const html = esc(text)
@@ -1584,7 +1584,7 @@ async function renderBriefFallback(){
   const sec = (title, lines) => lines && lines.length
     ? `<span class="bhead">${title}</span><p>${lines.map(esc).join('<br>')}</p>` : '';
   const wx = state.cache.weather?.[0];
-  let html = `<div class="sec-note">AI brief unavailable right now (service or credit issue) — here's the raw rundown:</div><div class="brief">`;
+  let html = `<div class="sec-note">Today's rundown for ${esc(state.place.name)}:</div><div class="brief">`;
   html += sec('WEATHER', wx ? [wx.temperature + '°' + wx.temperatureUnit + ' — ' + wx.shortForecast] : null);
   html += sec('ALERTS', (alerts||[]).slice(0,4).map(a=>a.event));
   html += sec('NEWS', (news||[]).slice(0,5).map(n=>n.title));
