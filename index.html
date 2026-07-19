@@ -85,7 +85,13 @@
     border-radius:99px;padding:6px 12px;cursor:pointer;
   }
   .chiprow button.scan-deals:hover{filter:brightness(1.15)}
-  .filterrow{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+  .filterrow{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;align-items:center}
+  .radlabel{font-family:'Overpass',sans-serif;font-weight:700;font-size:.7rem;
+    text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft)}
+  .poi-desc img{width:100%;max-height:170px;object-fit:cover;border-radius:8px;margin:2px 0 8px}
+  .poi-desc p{font-size:.8rem;line-height:1.55;color:var(--ink);margin-bottom:6px}
+  .poi-desc .addrline{color:var(--ink-soft)}
+  .wikinote{font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft);margin-bottom:6px}
   .filterrow button{
     border:1.5px solid var(--line);background:#fff;color:var(--ink-soft);
     font-family:'Overpass',sans-serif;font-weight:700;font-size:.7rem;
@@ -457,6 +463,7 @@ const $ = id => document.getElementById(id);
 const contentEl = $('content');
 const state = {
   place: null,          // {lat, lon, name}
+  radiusM: 7000,        // POI search radius in meters (user-adjustable)
   tab: 'weather',
   cache: {},            // per-place fetched data
   reqToken: 0,          // invalidates stale fetches when place changes
@@ -890,11 +897,11 @@ function overpassQuery(body){
 }
 
 async function getPOIs(kind){
-  const key = 'poi_'+kind;
+  const key = 'poi_'+kind+'_'+state.radiusM;
   if(state.cache[key]) return state.cache[key];
   const { lat, lon } = state.place;
   const body = '[out:json][timeout:25];(' +
-    POI_FILTERS[kind].replaceAll('R','7000').replaceAll('LAT',lat).replaceAll('LON',lon) +
+    POI_FILTERS[kind].replaceAll('R', String(state.radiusM)).replaceAll('LAT',lat).replaceAll('LON',lon) +
     ');out center 60;';
   const d = await overpassQuery(body);
   const items = (d.elements||[])
@@ -908,6 +915,8 @@ async function getPOIs(kind){
                website: e.tags.website || e.tags['contact:website'] || '',
                hours:   e.tags.opening_hours || '',
                phone:   e.tags.phone || e.tags['contact:phone'] || '',
+               wiki:    e.tags.wikipedia || '',
+               addr:    [e.tags['addr:housenumber'], e.tags['addr:street']].filter(Boolean).join(' '),
                cuisine: (e.tags.cuisine || '').replaceAll(';', ', ').replaceAll('_',' ') };
     })
     .filter(Boolean)
@@ -973,19 +982,25 @@ function openBadge(hours){
 function directionsURL(it){
   return `https://www.google.com/maps/dir/?api=1&destination=${it.lat},${it.lon}`;
 }
+function gmapsURL(it){
+  return 'https://www.google.com/maps/search/?api=1&query=' +
+    encodeURIComponent(`${it.name} ${state.place.name}`);
+}
 function poiDetailHTML(it, idx){
   const rows = [];
   if(it.cuisine) rows.push(`<div class="row">Cuisine: ${esc(it.cuisine)}</div>`);
   if(it.hours)   rows.push(`<div class="row">Hours: ${esc(it.hours)}</div>`);
   if(it.phone)   rows.push(`<div class="row">${esc(it.phone)}</div>`);
-  const acts = [`<a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>`];
+  const acts = [
+    `<a href="${gmapsURL(it)}" target="_blank" rel="noopener">Google Maps</a>`,
+    `<a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>`];
   if(it.website){
     acts.push(`<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>`);
     acts.push(`<button class="scan-deals" data-idx="${idx}">Scan site for deals</button>`);
   }else{
     acts.push(`<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>`);
   }
-  return rows.join('') +
+  return `<div class="poi-desc" id="desc-${idx}"></div>` + rows.join('') +
     `<div class="poi-actions chiprow" style="margin:8px 0 0">${acts.join('')}</div>` +
     `<div class="deal-results" id="deals-${idx}"></div>`;
 }
@@ -1006,11 +1021,16 @@ function drawPOIs(kind){
     ? all.filter(i=>i.kind===state.poiFilter) : all;
   state.currentPOIs = items;
 
+  const RADII = [[7000,'4 mi'],[16000,'10 mi'],[40000,'25 mi']];
   let html = `
     <div class="viewtoggle" role="group" aria-label="List or map view">
       <button aria-pressed="true">List</button>
       <button aria-pressed="false">Map</button>
-    </div>`;
+    </div>
+    <div class="filterrow radiusrow" role="group" aria-label="Search radius">
+      <span class="radlabel">Radius:</span>` +
+    RADII.map(([m,l])=>`<button data-r="${m}" aria-pressed="${state.radiusM===m}">${l}</button>`).join('') +
+    `</div>`;
   if(filterable){
     const counts = {};
     for(const i of all) counts[i.kind] = (counts[i.kind]||0)+1;
@@ -1022,7 +1042,7 @@ function drawPOIs(kind){
         `</div>`;
     }
   }
-  html += `<div class="sec-note">${items.length} places within ~4.5 miles · tap an entry for details · all pinned on the map</div>`;
+  html += `<div class="sec-note">${items.length} places within ~${(state.radiusM/1609).toFixed(0)} miles · tap an entry for details · all pinned on the map</div>`;
   let idx = 0;
   for(const it of items){
     html += `
@@ -1039,16 +1059,68 @@ function drawPOIs(kind){
       .bindPopup(
         `<strong>${esc(it.name)}</strong>${openBadge(it.hours)}<br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
         (it.hours ? `<br><small>${esc(it.hours)}</small>` : '') +
-        `<br><a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>` +
+        `<br><a href="${gmapsURL(it)}" target="_blank" rel="noopener">Google Maps</a> · ` +
+        `<a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>` +
         (it.website ? ` · <a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>` : ''));
   }
   contentEl.innerHTML = html;
   const [listBtn, mapBtn] = contentEl.querySelectorAll('.viewtoggle button');
   mapBtn.addEventListener('click', ()=>{ hidePanel(); map.flyToBounds(getPOIBounds(items.length?items:all), {padding:[40,40], maxZoom:15}); });
   listBtn.addEventListener('click', showPanel);
-  contentEl.querySelectorAll('.filterrow button').forEach(b=>{
+  contentEl.querySelectorAll('.filterrow:not(.radiusrow) button').forEach(b=>{
     b.addEventListener('click', ()=>{ state.poiFilter = b.dataset.k || null; drawPOIs(kind); });
   });
+  contentEl.querySelectorAll('.radiusrow button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const r = +b.dataset.r;
+      if(r === state.radiusM) return;
+      state.radiusM = r;
+      for(const k of Object.keys(state.cache)) if(k.startsWith('poi_')) delete state.cache[k];
+      renderTab(kind);
+    });
+  });
+  contentEl.querySelectorAll('details.poi').forEach((d,i)=>{
+    d.addEventListener('toggle', ()=>{
+      if(d.open) enrichPOI(state.currentPOIs[i], document.getElementById('desc-'+i));
+    });
+  });
+}
+
+/* ---------------- descriptions + images (Wikipedia, lazy on expand) ---------------- */
+async function enrichPOI(it, box){
+  if(!it || !box) return;
+  if(it._desc !== undefined){ box.innerHTML = it._desc; return; }
+  it._desc = '';                                       // only try once
+  box.innerHTML = `<div class="loading" style="padding:6px 0"><div class="spinner"></div>Looking up…</div>`;
+  let title = null;
+  try{
+    if(it.wiki && it.wiki.startsWith('en:')) title = it.wiki.slice(3);
+    if(!title){
+      // find a Wikipedia article at this exact spot whose title matches the name
+      const g = await fetchJSON('https://en.wikipedia.org/w/api.php?action=query&list=geosearch' +
+        `&gscoord=${it.lat}%7C${it.lon}&gsradius=300&gslimit=5&format=json&origin=*`);
+      const words = it.name.toLowerCase().split(/\W+/).filter(w=>w.length>3);
+      const hit = (g?.query?.geosearch||[]).find(r=>{
+        const t = r.title.toLowerCase();
+        return words.some(w=>t.includes(w));
+      });
+      if(hit) title = hit.title;
+    }
+    if(title){
+      const sum = await fetchJSON('https://en.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(title));
+      if(sum.extract){
+        it._desc =
+          (sum.thumbnail?.source ? `<img src="${esc(sum.thumbnail.source)}" alt="${esc(title)}" loading="lazy">` : '') +
+          `<p>${esc(sum.extract)}</p><div class="wikinote">From Wikipedia</div>`;
+      }
+    }
+  }catch(e){}
+  if(!it._desc){
+    it._desc = it.addr
+      ? `<p class="addrline">${esc(it.addr)}</p>`
+      : `<p class="addrline">No description on file — the Google Maps link below has photos and reviews.</p>`;
+  }
+  box.innerHTML = it._desc;
 }
 function getPOIBounds(items){
   return L.latLngBounds(items.map(i=>[i.lat, i.lon]).concat([[state.place.lat, state.place.lon]]));
