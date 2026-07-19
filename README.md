@@ -24,9 +24,12 @@ remembered between visits.
 
 1. Render dashboard → **New → Web Service** → connect this repo
 2. Runtime: Node · Build command: `npm install` · Start command: `npm start`
-3. Environment tab → add `FSQ_API_KEY` (your Foursquare Places API key).
-   Env vars are encrypted, injected at runtime, and never appear in the repo.
-4. Deploy.
+3. Environment tab → add keys (all encrypted, never in the repo):
+   - `FSQ_API_KEY` — Foursquare Places (places coverage, photos, ratings)
+   - `TICKETMASTER_API_KEY` — events tab
+   - `CENSUS_API_KEY` — optional; raises rate limits on the county-profile lookups
+   - `ANTHROPIC_API_KEY` — the AI "Brief" tab
+4. Deploy. Every feature degrades gracefully when its key is absent.
 
 Without `FSQ_API_KEY`, everything still works from OpenStreetMap — Foursquare
 just adds coverage. The server also proxies news, Reddit, and deal-scans

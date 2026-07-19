@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Local Atlas — explore any US or Canadian town</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#00583D">
+<link rel="apple-touch-icon" href="/icon.svg">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -107,6 +110,42 @@
     display:block;font-family:'IBM Plex Mono',monospace;font-size:.62rem;
     color:var(--ink-soft);margin-top:3px;
   }
+  .poicontrols{display:flex;gap:8px;margin:0 0 10px}
+  .poicontrols input{
+    flex:1;min-width:0;border:1.5px solid var(--line);border-radius:9px;
+    padding:7px 10px;font:inherit;font-size:.85rem;
+  }
+  .poicontrols .opennow{
+    border:1.5px solid var(--sign-green);background:#fff;color:var(--sign-green);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.72rem;
+    text-transform:uppercase;border-radius:99px;padding:0 12px;cursor:pointer;
+  }
+  .poicontrols .opennow[aria-pressed="true"]{background:var(--sign-green);color:#fff}
+  .chiprow button{
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.74rem;
+    border-radius:99px;padding:6px 12px;cursor:pointer;
+    color:#fff;background:var(--sign-green);border:1.5px solid var(--sign-green);
+  }
+  .chiprow button:hover{filter:brightness(1.15)}
+  .chiprow button.fav-btn,.chiprow button.unfav-btn{background:#fff;color:var(--sign-green)}
+  .event-card{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .event-card:last-child{border-bottom:none}
+  .event-card img{flex:0 0 92px;width:92px;height:60px;object-fit:cover;border-radius:8px}
+  .event-card h3{font-size:.9rem;font-weight:600;line-height:1.35}
+  .event-card h3 a{color:inherit}
+  .event-card .meta{font-family:'IBM Plex Mono',monospace;font-size:.66rem;color:var(--sign-green);margin-top:4px}
+  .brief p{font-size:.88rem;line-height:1.65;margin-bottom:10px}
+  .bhead{
+    display:block;font-family:'Overpass',sans-serif;font-weight:800;font-size:.78rem;
+    letter-spacing:.1em;color:var(--sign-green);margin:12px 0 4px;
+  }
+  .radar-btn{
+    position:fixed;z-index:900;right:16px;top:60px;
+    background:#fff;color:var(--sign-green);border:2px solid var(--sign-green);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.74rem;
+    padding:6px 12px;border-radius:99px;cursor:pointer;box-shadow:var(--shadow);
+  }
+  .radar-btn[aria-pressed="true"]{background:var(--sign-green);color:#fff}
   .social-item{padding:11px 0;border-bottom:1px solid var(--line)}
   .social-item:last-child{border-bottom:none}
   .social-item h3{font-size:.9rem;font-weight:600;line-height:1.4}
@@ -407,6 +446,7 @@
 <div id="map" role="application" aria-label="Map of the United States and Canada"></div>
 <div class="hint-chip" id="hintChip">Tap anywhere on the map to explore that area</div>
 <button class="reopen" id="reopenBtn">◂ Local Atlas</button>
+<button class="radar-btn" id="radarBtn" aria-pressed="false">☂ Radar</button>
 
 <aside class="panel" id="panel">
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
@@ -434,18 +474,22 @@
   <div class="place-badge" id="placeBadge">
     <div class="name" id="placeName"></div>
     <div class="coords" id="placeCoords"></div>
+    <div class="coords" id="townStats"></div>
   </div>
 
   <div class="tabs" role="tablist" id="tabs" style="display:none">
     <button class="tab" role="tab" data-tab="weather" aria-selected="true">Weather</button>
     <button class="tab" role="tab" data-tab="alerts" aria-selected="false">Alerts<span class="cnt" id="alertCnt" style="display:none"></span></button>
     <button class="tab" role="tab" data-tab="news" aria-selected="false">News</button>
+    <button class="tab" role="tab" data-tab="events" aria-selected="false">Events</button>
     <button class="tab" role="tab" data-tab="services" aria-selected="false">Services</button>
     <button class="tab" role="tab" data-tab="attractions" aria-selected="false">See &amp; Do</button>
     <button class="tab" role="tab" data-tab="food" aria-selected="false">Eat</button>
     <button class="tab" role="tab" data-tab="shopping" aria-selected="false">Shop</button>
     <button class="tab" role="tab" data-tab="kids" aria-selected="false">Kids</button>
     <button class="tab" role="tab" data-tab="social" aria-selected="false">Social</button>
+    <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved</button>
+    <button class="tab" role="tab" data-tab="brief" aria-selected="false">Brief</button>
   </div>
 
   <div class="content" id="content">
@@ -477,7 +521,10 @@ const contentEl = $('content');
 const state = {
   place: null,          // {lat, lon, name}
   radiusM: 7000,        // POI search radius in meters (user-adjustable)
-  backendP: null,       // resolves {ok, fsq} — whether our Node backend is present
+  backendP: null,       // resolves {ok, fsq, tm, ai} — whether our Node backend is present
+  poiSearch: '',        // name filter within the current list
+  poiOpenOnly: false,   // only places open right now
+  favKeys: new Set(),   // normalized keys of saved places
   tab: 'weather',
   cache: {},            // per-place fetched data
   reqToken: 0,          // invalidates stale fetches when place changes
@@ -489,9 +536,9 @@ state.backendP = (async ()=>{
     const ctl = new AbortController();
     setTimeout(()=>ctl.abort(), 4000);
     const r = await fetch('/api/health', { signal: ctl.signal });
-    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq }; }
+    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, tm:!!j.tm, ai:!!j.ai }; }
   }catch(e){}
-  return { ok:false, fsq:false };
+  return { ok:false, fsq:false, tm:false, ai:false };
 })();
 
 /* ---------------- map ---------------- */
@@ -677,6 +724,19 @@ async function loadPlace(place, { fly=true } = {}){
   $('placeBadge').style.display = 'block';
   $('placeName').textContent = place.name;
   $('placeCoords').textContent = place.lat.toFixed(4)+'°N  '+Math.abs(place.lon).toFixed(4)+'°W';
+  $('townStats').textContent = '';
+  if(place.country !== 'CA'){
+    state.backendP.then(be=>{
+      if(!be.ok) return;
+      fetchT(`/api/census?lat=${place.lat}&lon=${place.lon}`, {}, 9000)
+        .then(r=>r.ok ? r.json() : null)
+        .then(d=>{
+          if(d && d.population && state.place === place)
+            $('townStats').textContent =
+              `${d.county} · pop ${d.population.toLocaleString()} · median income $${d.medianIncome.toLocaleString()} · median age ${d.medianAge}`;
+        }).catch(()=>{});
+    });
+  }
   $('tabs').style.display = 'flex';
   $('alertCnt').style.display = 'none';
   msg('');
@@ -738,9 +798,21 @@ async function renderTab(name){
       const s = await getSocial(token);
       if(token!==state.reqToken || state.tab!=='social') return;
       renderSocial(s);
+    }else if(name==='events'){
+      showLoading('Checking upcoming events…');
+      const ev = await getEvents();
+      if(token!==state.reqToken || state.tab!=='events') return;
+      renderEvents(ev);
+    }else if(name==='brief'){
+      showLoading('Writing your local brief… (10–20 s)');
+      const t = await getBrief();
+      if(token!==state.reqToken || state.tab!=='brief') return;
+      renderBrief(t);
+    }else if(name==='saved'){
+      await renderSavedTab();
     }else{
       const labels = { services:'public services', attractions:'things to see', food:'places to eat', kids:'kids activities', shopping:'stores nearby' };
-      state.poiFilter = null;
+      state.poiFilter = null; state.poiSearch = ''; state.poiOpenOnly = false;
       showLoading('Finding '+labels[name]+' nearby…');
       const pois = await getPOIs(name, token);
       if(token!==state.reqToken || state.tab!==name) return;
@@ -824,6 +896,17 @@ function renderWeather(periods){
   }
   html += `<div class="sec-note">Forecast: ${state.place.country==='CA' ? 'Open-Meteo' : 'National Weather Service'}</div>`;
   contentEl.innerHTML = html;
+  contentEl.insertAdjacentHTML('afterbegin', `<div class="sec-note" id="aqiLine">Air quality: checking…</div>`);
+  const { lat, lon } = state.place;
+  fetchJSON(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=us_aqi,uv_index`)
+    .then(d=>{
+      const el = document.getElementById('aqiLine');
+      if(!el) return;
+      const aqi = d.current?.us_aqi, uv = d.current?.uv_index;
+      const band = aqi==null ? '' : aqi<=50 ? ' (good)' : aqi<=100 ? ' (moderate)' : aqi<=150 ? ' (unhealthy for sensitive groups)' : ' (unhealthy)';
+      el.textContent = `Air quality ${aqi ?? '—'}${band} · UV index ${uv ?? '—'}`;
+    })
+    .catch(()=>{ const el = document.getElementById('aqiLine'); if(el) el.remove(); });
 }
 
 /* ---------------- alerts (NWS / Environment Canada) ---------------- */
@@ -1119,6 +1202,8 @@ function poiDetailHTML(it, idx){
   }else{
     acts.push(`<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>`);
   }
+  const saved = state.favKeys.has(normName(it.name + state.place.name));
+  acts.push(`<button class="fav-btn" data-idx="${idx}">${saved ? '★ Saved' : '☆ Save'}</button>`);
   return `<div class="poi-desc" id="desc-${idx}"></div>` + rows.join('') +
     `<div class="poi-actions chiprow" style="margin:8px 0 0">${acts.join('')}</div>` +
     `<div class="deal-results" id="deals-${idx}"></div>`;
@@ -1136,8 +1221,14 @@ function drawPOIs(kind){
     return;
   }
   const filterable = (kind==='attractions' || kind==='kids' || kind==='shopping');
-  const items = (filterable && state.poiFilter)
-    ? all.filter(i=>i.kind===state.poiFilter) : all;
+  let items = all;
+  if(filterable && state.poiFilter) items = items.filter(i=>i.kind===state.poiFilter);
+  if(state.poiSearch){
+    const q = state.poiSearch.toLowerCase();
+    items = items.filter(i=>i.name.toLowerCase().includes(q));
+  }
+  if(state.poiOpenOnly)
+    items = items.filter(i=> i.openNow === true || isOpenNow(i.hours) === true);
   state.currentPOIs = items;
 
   const RADII = [[7000,'4 mi'],[16000,'10 mi'],[40000,'25 mi']];
@@ -1149,7 +1240,11 @@ function drawPOIs(kind){
     <div class="filterrow radiusrow" role="group" aria-label="Search radius">
       <span class="radlabel">Radius:</span>` +
     RADII.map(([m,l])=>`<button data-r="${m}" aria-pressed="${state.radiusM===m}">${l}</button>`).join('') +
-    `</div>`;
+    `</div>
+    <div class="poicontrols">
+      <input class="poi-search" placeholder="Filter by name" value="${esc(state.poiSearch)}" aria-label="Filter list by name">
+      <button class="opennow" aria-pressed="${state.poiOpenOnly}">Open now</button>
+    </div>`;
   if(filterable){
     const counts = {};
     for(const i of all) counts[i.kind] = (counts[i.kind]||0)+1;
@@ -1199,6 +1294,22 @@ function drawPOIs(kind){
       renderTab(kind);
     });
   });
+  if(!items.length && all.length){
+    contentEl.querySelector('.sec-note').insertAdjacentHTML('afterend',
+      `<div class="empty-state"><p>Nothing matches those filters.</p></div>`);
+  }
+  const sBox = contentEl.querySelector('.poi-search');
+  if(sBox) sBox.addEventListener('input', ()=>{
+    clearTimeout(state._searchT);
+    state._searchT = setTimeout(()=>{
+      state.poiSearch = sBox.value.trim();
+      drawPOIs(kind);
+      const nb = contentEl.querySelector('.poi-search');
+      if(nb){ nb.focus(); nb.setSelectionRange(nb.value.length, nb.value.length); }
+    }, 350);
+  });
+  const onB = contentEl.querySelector('.opennow');
+  if(onB) onB.addEventListener('click', ()=>{ state.poiOpenOnly = !state.poiOpenOnly; drawPOIs(kind); });
   contentEl.querySelectorAll('details.poi').forEach((d,i)=>{
     d.addEventListener('toggle', ()=>{
       if(d.open) enrichPOI(state.currentPOIs[i], document.getElementById('desc-'+i));
@@ -1212,6 +1323,25 @@ async function enrichPOI(it, box){
   if(it._desc !== undefined){ box.innerHTML = it._desc; return; }
   it._desc = '';                                       // only try once
   box.innerHTML = `<div class="loading" style="padding:6px 0"><div class="spinner"></div>Looking up…</div>`;
+  if(it.fsqId){
+    try{
+      const r = await fetchT('/api/fsqdetails?id=' + it.fsqId, {}, 9000);
+      if(r.ok){
+        const d = await r.json();
+        const bits = [];
+        if(d.photo) bits.push(`<img src="${esc(d.photo)}" alt="" loading="lazy">`);
+        const meta = [];
+        if(d.rating != null) meta.push('Rated ' + d.rating + '/10');
+        if(d.price != null) meta.push('$'.repeat(Math.max(1, Math.min(4, d.price))));
+        if(meta.length) bits.push(`<p>${meta.join(' · ')}</p>`);
+        if(bits.length){
+          it._desc = bits.join('') + `<div class="wikinote">From Foursquare</div>`;
+          box.innerHTML = it._desc;
+          return;
+        }
+      }
+    }catch(e){}
+  }
   let title = null;
   try{
     if(it.wiki && it.wiki.startsWith('en:')) title = it.wiki.slice(3);
@@ -1324,6 +1454,27 @@ async function scanDeals(it, box){
   box.innerHTML = out;
 }
 contentEl.addEventListener('click', ev=>{
+  const fb = ev.target.closest('.fav-btn');
+  if(fb && state.currentPOIs){
+    const it = state.currentPOIs[+fb.dataset.idx];
+    if(it){
+      (async ()=>{
+        let list = (await storeGet('favorites')) || [];
+        const key = normName(it.name + state.place.name);
+        if(state.favKeys.has(key)){
+          list = list.filter(f=>normName(f.name + f.place) !== key);
+          state.favKeys.delete(key);
+          fb.textContent = '☆ Save';
+        }else{
+          list.unshift({ name:it.name, kind:it.kind, lat:it.lat, lon:it.lon, place:state.place.name });
+          state.favKeys.add(key);
+          fb.textContent = '★ Saved';
+        }
+        await storeSet('favorites', list.slice(0, 100));
+      })();
+    }
+    return;
+  }
   const ap = ev.target.closest('a[data-app]');
   if(ap){
     ev.preventDefault();
@@ -1340,6 +1491,122 @@ contentEl.addEventListener('click', ev=>{
   const box = $('deals-'+btn.dataset.idx);
   if(it && box) scanDeals(it, box);
 });
+
+/* ---------------- events (Ticketmaster via backend) ---------------- */
+async function getEvents(){
+  if(state.cache.events !== undefined) return state.cache.events;
+  const be = await state.backendP;
+  if(!be.tm){ state.cache.events = null; return null; }     // key not configured
+  const miles = Math.max(10, Math.round(state.radiusM/1609));
+  const r = await fetchT(`/api/events?lat=${state.place.lat}&lon=${state.place.lon}&radius=${miles}`, {}, 12000);
+  if(!r.ok) throw new Error('events HTTP '+r.status);
+  state.cache.events = (await r.json()).events || [];
+  return state.cache.events;
+}
+function renderEvents(evs){
+  if(evs === null){
+    contentEl.innerHTML = `<div class="empty-state"><p>Events need a free Ticketmaster API key on the server —
+      add <b>TICKETMASTER_API_KEY</b> in Render's Environment tab.</p></div>`;
+    return;
+  }
+  if(!evs.length){
+    contentEl.innerHTML = `<div class="empty-state"><p>No ticketed events listed nearby in the coming weeks.</p></div>`;
+    return;
+  }
+  let html = `<div class="sec-note">Upcoming near ${esc(state.place.name)} · via Ticketmaster</div>`;
+  for(const e of evs){
+    let when = '';
+    if(e.date){
+      const d = new Date(e.date + 'T' + (e.time || '12:00:00'));
+      when = d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' })
+           + (e.time ? ' · ' + e.time.slice(0,5) : '');
+    }
+    html += `
+      <div class="event-card">
+        ${e.img ? `<img src="${esc(e.img)}" loading="lazy" alt="">` : ''}
+        <div class="ev-body">
+          <h3><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.name)}</a></h3>
+          <div class="meta">${esc(when)}${e.venue ? ' · ' + esc(e.venue) : ''}${e.seg ? ' · ' + esc(e.seg) : ''}</div>
+        </div>
+      </div>`;
+  }
+  contentEl.innerHTML = html;
+}
+
+/* ---------------- AI town brief (backend) ---------------- */
+async function getBrief(){
+  if(state.cache.brief !== undefined) return state.cache.brief;
+  const be = await state.backendP;
+  if(!be.ai){ state.cache.brief = null; return null; }
+  const [alerts, news, social, events] = await Promise.all([
+    getAlerts().catch(()=>[]), getNews().catch(()=>[]),
+    getSocial().catch(()=>[]), getEvents().catch(()=>[])
+  ]);
+  const wx = state.cache.weather || null;
+  const data = {
+    weatherNow: wx?.[0] ? { temp: wx[0].temperature + '°' + wx[0].temperatureUnit, forecast: wx[0].shortForecast } : null,
+    alerts: (alerts||[]).slice(0,4).map(a=>a.event),
+    news: (news||[]).slice(0,6).map(n=>n.title),
+    reddit: (social||[]).slice(0,6).map(p=>p.title),
+    events: (events||[]).slice(0,6).map(e=>e.name + ' (' + e.date + ')')
+  };
+  const r = await fetchT('/api/brief', {
+    method:'POST', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ name: state.place.name, country: state.place.country, data })
+  }, 30000);
+  if(!r.ok) throw new Error('brief HTTP '+r.status);
+  state.cache.brief = (await r.json()).text || '';
+  return state.cache.brief;
+}
+function renderBrief(text){
+  if(text === null){
+    contentEl.innerHTML = `<div class="empty-state"><p>The Brief needs an Anthropic API key on the server —
+      add <b>ANTHROPIC_API_KEY</b> in Render's Environment tab.</p></div>`;
+    return;
+  }
+  const html = esc(text)
+    .replace(/^(OVERVIEW|NEWS|COMMUNITY|THIS WEEK)\s*:?\s*$/gm, '<span class="bhead">$1</span>')
+    .replace(/\n\n+/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+  contentEl.innerHTML = `<div class="brief"><p>${html}</p></div>
+    <div class="sec-note">AI-generated from live local data — may contain errors.</div>`;
+}
+
+/* ---------------- saved places ---------------- */
+async function renderSavedTab(){
+  const favs = (await storeGet('favorites')) || [];
+  if(!favs.length){
+    contentEl.innerHTML = `<div class="empty-state"><p>No saved places yet —
+      open any place entry and tap ☆ Save.</p></div>`;
+    return;
+  }
+  let html = `<div class="sec-note">${favs.length} saved place${favs.length>1?'s':''} across your towns</div>`;
+  favs.forEach((f,i)=>{
+    const gm = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(f.name + ' ' + f.place);
+    html += `
+      <div class="poi" style="padding:11px 0">
+        <div style="width:100%">
+          <div class="nm">${esc(f.name)}</div>
+          <div class="kind">${esc(f.kind)} · ${esc(f.place)}</div>
+          <div class="chiprow" style="margin-top:6px">
+            <a href="${gm}" target="_blank" rel="noopener">Google Maps</a>
+            <a href="https://www.google.com/maps/dir/?api=1&destination=${f.lat},${f.lon}" target="_blank" rel="noopener">Directions</a>
+            <button class="unfav-btn" data-i="${i}">Remove</button>
+          </div>
+        </div>
+      </div>`;
+  });
+  contentEl.innerHTML = html;
+  contentEl.querySelectorAll('.unfav-btn').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      const list = (await storeGet('favorites')) || [];
+      list.splice(+b.dataset.i, 1);
+      await storeSet('favorites', list);
+      state.favKeys = new Set(list.map(f=>normName(f.name + f.place)));
+      renderSavedTab();
+    });
+  });
+}
 
 /* ---------------- social (Reddit + platform search links) ---------------- */
 function socialLinks(){
@@ -1728,6 +1995,24 @@ $('geoBtn').addEventListener('click', async ()=>{
   }
 });
 
+/* ---------------- weather radar overlay (RainViewer) ---------------- */
+let radarLayer = null;
+$('radarBtn').addEventListener('click', async ()=>{
+  if(radarLayer){
+    radarLayer.remove(); radarLayer = null;
+    $('radarBtn').setAttribute('aria-pressed','false');
+    return;
+  }
+  try{
+    const d = await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
+    const fr = d.radar?.past?.slice(-1)[0];
+    if(!fr) return;
+    radarLayer = L.tileLayer(`https://tilecache.rainviewer.com/v2/radar/${fr.time}/256/{z}/{x}/{y}/2/1_1.png`,
+      { opacity:.65 }).addTo(map);
+    $('radarBtn').setAttribute('aria-pressed','true');
+  }catch(e){}
+});
+
 /* ---------------- panel show/hide ---------------- */
 function refreshMapSize(){ setTimeout(()=>map.invalidateSize(), 320); }
 function hidePanel(){
@@ -1760,8 +2045,12 @@ $('sheetToggle').addEventListener('click', ()=>{
 });
 
 /* ---------------- boot: URL hash first, then last saved place ---------------- */
+if('serviceWorker' in navigator && location.protocol === 'https:'){
+  navigator.serviceWorker.register('/sw.js').catch(()=>{});
+}
 (async ()=>{
   storeGet('recent-places').then(l=>{ if(l) renderRecents(l); });
+  storeGet('favorites').then(l=>{ if(l) state.favKeys = new Set(l.map(f=>normName(f.name + f.place))); });
   const fromHash = parseHash();
   const last = fromHash || await loadLast();
   if(last && typeof last.lat==='number'){

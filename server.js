@@ -13,6 +13,9 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 10000;
 const FSQ = process.env.FSQ_API_KEY || '';
+const TM = process.env.TICKETMASTER_API_KEY || '';
+const CENSUS = process.env.CENSUS_API_KEY || '';
+const AI = process.env.ANTHROPIC_API_KEY || '';
 
 /* ---- tiny TTL cache ---- */
 const cache = new Map();
@@ -26,7 +29,7 @@ function cached(key, ttlMs, fn){
   });
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ }));
+app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI }));
 
 /* ---- Foursquare places ---- */
 const FSQ_CATS = {
@@ -45,13 +48,14 @@ app.get('/api/places', async (req, res) => {
     const url = 'https://api.foursquare.com/v3/places/search' +
       `?ll=${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}` +
       `&radius=${r}&categories=${FSQ_CATS[category]}&limit=50` +
-      '&fields=name%2Cgeocodes%2Ccategories%2Clocation%2Cdistance%2Cwebsite%2Ctel%2Chours';
+      '&fields=fsq_id%2Cname%2Cgeocodes%2Ccategories%2Clocation%2Cdistance%2Cwebsite%2Ctel%2Chours';
     const data = await cached('fsq:' + url, 6 * 3600e3, async () => {
       const rr = await fetch(url, { headers: { Authorization: FSQ, Accept: 'application/json' } });
       if(!rr.ok) throw new Error('Foursquare HTTP ' + rr.status);
       return rr.json();
     });
     const items = (data.results || []).map(p => ({
+      fsqId: p.fsq_id || '',
       name: p.name,
       kind: (p.categories?.[0]?.name || '').toLowerCase(),
       lat: p.geocodes?.main?.latitude,
@@ -128,6 +132,103 @@ app.get('/api/fetch', async (req, res) => {
     });
     res.type('text/plain').send(txt);
   }catch(e){ res.status(502).send('fetch failed: ' + String(e.message || e)); }
+});
+
+/* ---- Ticketmaster events ---- */
+app.get('/api/events', async (req, res) => {
+  try{
+    if(!TM) return res.status(503).json({ error: 'TICKETMASTER_API_KEY not set' });
+    const { lat, lon, radius = '25' } = req.query;
+    if(!lat || !lon) return res.status(400).json({ error: 'bad params' });
+    const r = Math.min(parseInt(radius, 10) || 25, 100);
+    const url = 'https://app.ticketmaster.com/discovery/v2/events.json' +
+      `?apikey=${TM}&latlong=${encodeURIComponent(lat)},${encodeURIComponent(lon)}` +
+      `&radius=${r}&unit=miles&sort=date,asc&size=30`;
+    const data = await cached('tm:' + url, 30 * 60e3, async () => {
+      const rr = await fetch(url);
+      if(!rr.ok) throw new Error('Ticketmaster HTTP ' + rr.status);
+      return rr.json();
+    });
+    const events = (data._embedded?.events || []).map(e => ({
+      name: e.name, url: e.url || '',
+      date: e.dates?.start?.localDate || '', time: e.dates?.start?.localTime || '',
+      venue: e._embedded?.venues?.[0]?.name || '',
+      img: (e.images || []).find(i => i.ratio === '16_9' && i.width >= 300)?.url || e.images?.[0]?.url || '',
+      seg: e.classifications?.[0]?.segment?.name || ''
+    }));
+    res.json({ events });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* ---- county profile (FCC geo → Census ACS; key optional but recommended) ---- */
+app.get('/api/census', async (req, res) => {
+  try{
+    const { lat, lon } = req.query;
+    if(!lat || !lon) return res.status(400).json({ error: 'bad params' });
+    const out = await cached(`cs:${(+lat).toFixed(2)},${(+lon).toFixed(2)}`, 7 * 86400e3, async () => {
+      const fr = await fetch(`https://geo.fcc.gov/api/census/area?lat=${lat}&lon=${lon}&format=json`);
+      if(!fr.ok) throw new Error('FCC HTTP ' + fr.status);
+      const a = (await fr.json()).results?.[0];
+      if(!a?.county_fips) throw new Error('outside US census coverage');
+      const st = a.county_fips.slice(0, 2), co = a.county_fips.slice(2);
+      const key = CENSUS ? '&key=' + CENSUS : '';
+      const cr = await fetch('https://api.census.gov/data/2023/acs/acs5' +
+        `?get=NAME,B01003_001E,B19013_001E,B01002_001E&for=county:${co}&in=state:${st}${key}`);
+      if(!cr.ok) throw new Error('Census HTTP ' + cr.status);
+      const row = (await cr.json())[1];
+      return { county: row[0], population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
+    });
+    res.json(out);
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* ---- Foursquare place details (photo, rating, price) ---- */
+app.get('/api/fsqdetails', async (req, res) => {
+  try{
+    if(!FSQ) return res.status(503).json({ error: 'FSQ_API_KEY not set' });
+    const id = String(req.query.id || '').replace(/[^\w]/g, '');
+    if(!id) return res.status(400).json({ error: 'id required' });
+    const data = await cached('fd:' + id, 86400e3, async () => {
+      const rr = await fetch(`https://api.foursquare.com/v3/places/${id}?fields=rating%2Cprice%2Cphotos`,
+        { headers: { Authorization: FSQ, Accept: 'application/json' } });
+      if(!rr.ok) throw new Error('Foursquare HTTP ' + rr.status);
+      return rr.json();
+    });
+    res.json({
+      rating: data.rating ?? null,
+      price: data.price ?? null,
+      photo: data.photos?.[0] ? data.photos[0].prefix + '500x300' + data.photos[0].suffix : ''
+    });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* ---- AI town brief (Anthropic; cached per place per 6 h) ---- */
+app.post('/api/brief', express.json({ limit: '200kb' }), async (req, res) => {
+  try{
+    if(!AI) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+    const { name = '', country = 'US', data = {} } = req.body || {};
+    if(!name) return res.status(400).json({ error: 'name required' });
+    const key = 'brief:' + name + ':' + new Date().toISOString().slice(0, 10);
+    const text = await cached(key, 6 * 3600e3, async () => {
+      const rr = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': AI, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 700,
+          messages: [{ role: 'user', content:
+`Write a compact local briefing for ${name} (${country}). Use ONLY the data below. Four short plain-text sections titled OVERVIEW, NEWS, COMMUNITY, THIS WEEK, each 2-3 sentences. Lead with any active weather alerts. No preamble, no markdown symbols.
+
+DATA:
+${JSON.stringify(data).slice(0, 12000)}` }]
+        })
+      });
+      if(!rr.ok) throw new Error('Anthropic HTTP ' + rr.status);
+      const j = await rr.json();
+      return (j.content || []).map(b => b.text || '').join('\n').trim();
+    });
+    res.json({ text });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
 app.use(express.static(path.join(__dirname)));
