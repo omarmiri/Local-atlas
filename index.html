@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Atlas — explore any US town</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --sign-green:#00583D;
+    --sign-green-deep:#003D2B;
+    --paper:#F6F8F6;
+    --ink:#132019;
+    --ink-soft:#4C5D53;
+    --line:#DCE4DE;
+    --sun:#FFC72C;
+    --sky:#2E6F9E;
+    --alert:#C8402F;
+    --radius:14px;
+    --shadow:0 10px 30px rgba(9,30,20,.18);
+    font-size:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:'Public Sans',system-ui,-apple-system,sans-serif;
+    color:var(--ink);
+    background:var(--paper);
+    overflow:hidden;
+  }
+  #map{position:fixed;inset:0;z-index:0;background:#DDE7E1}
+
+  /* ---------- floating panel ---------- */
+  .panel{
+    position:fixed;z-index:1000;
+    top:16px;left:16px;bottom:16px;
+    width:min(400px,calc(100vw - 32px));
+    display:flex;flex-direction:column;
+    background:var(--paper);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    border:1px solid var(--line);
+    overflow:hidden;
+  }
+  .panel-head{
+    background:var(--sign-green);
+    color:#fff;
+    padding:14px 16px 12px;
+  }
+  .brand{
+    display:flex;align-items:baseline;gap:8px;
+    font-family:'Overpass',sans-serif;
+  }
+  .brand h1{font-size:1.05rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+  .brand span{font-size:.7rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--sun)}
+  .searchrow{display:flex;gap:8px;margin-top:10px}
+  .searchrow input{
+    flex:1;min-width:0;
+    border:2px solid var(--sign-green-deep);
+    border-radius:9px;
+    padding:9px 12px;
+    font:inherit;font-size:.95rem;
+    background:#fff;color:var(--ink);
+  }
+  .searchrow input::placeholder{color:#7d8b83}
+  .btn{
+    border:0;border-radius:9px;cursor:pointer;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.85rem;
+    padding:9px 13px;
+    background:var(--sun);color:var(--ink);
+    transition:transform .12s ease, filter .12s ease;
+    white-space:nowrap;
+  }
+  .btn:hover{filter:brightness(1.05)}
+  .btn:active{transform:scale(.97)}
+  .btn.ghost{
+    background:transparent;color:#fff;
+    border:1.5px solid rgba(255,255,255,.5);
+    font-weight:600;
+  }
+  .btn.ghost:hover{border-color:#fff;filter:none;background:rgba(255,255,255,.08)}
+  .locrow{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+  .search-msg{font-size:.78rem;color:#EAF3EE;min-height:1em;margin-top:6px;opacity:.9}
+  .search-msg.err{color:#FFD9CF}
+
+  /* place badge — the route-marker signature */
+  .place-badge{
+    margin:14px 16px 0;
+    display:none;
+    border:3px solid var(--sign-green);
+    border-radius:12px;
+    background:#fff;
+    padding:10px 14px 9px;
+    position:relative;
+  }
+  .place-badge::before{
+    content:"NOW VIEWING";
+    position:absolute;top:-9px;left:12px;
+    background:var(--paper);
+    padding:0 6px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:.6rem;letter-spacing:.18em;
+    color:var(--sign-green);font-weight:500;
+  }
+  .place-badge .name{
+    font-family:'Overpass',sans-serif;font-weight:800;
+    font-size:1.25rem;line-height:1.15;text-transform:uppercase;letter-spacing:.02em;
+  }
+  .place-badge .coords{
+    font-family:'IBM Plex Mono',monospace;font-size:.68rem;color:var(--ink-soft);margin-top:3px;
+  }
+
+  /* tabs */
+  .tabs{
+    display:flex;gap:4px;overflow-x:auto;
+    padding:12px 16px 0;
+    scrollbar-width:none;
+  }
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{
+    border:1.5px solid var(--line);border-bottom:none;
+    border-radius:9px 9px 0 0;
+    background:#EDF1EE;color:var(--ink-soft);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.76rem;
+    letter-spacing:.03em;text-transform:uppercase;
+    padding:8px 11px 7px;cursor:pointer;white-space:nowrap;
+    position:relative;
+  }
+  .tab[aria-selected="true"]{
+    background:#fff;color:var(--sign-green);
+    border-color:var(--sign-green);
+  }
+  .tab .cnt{
+    display:inline-block;min-width:16px;text-align:center;
+    background:var(--alert);color:#fff;border-radius:8px;
+    font-size:.65rem;padding:1px 4px;margin-left:4px;
+  }
+  .content{
+    flex:1;overflow-y:auto;
+    background:#fff;
+    border-top:2px solid var(--sign-green);
+    padding:14px 16px 20px;
+  }
+
+  /* content pieces */
+  .empty-state{padding:26px 6px;text-align:center;color:var(--ink-soft)}
+  .empty-state h2{font-family:'Overpass',sans-serif;color:var(--ink);font-size:1.05rem;margin-bottom:8px}
+  .empty-state p{font-size:.88rem;line-height:1.5}
+  .loading{display:flex;align-items:center;gap:10px;color:var(--ink-soft);font-size:.85rem;padding:14px 2px}
+  .spinner{width:16px;height:16px;border:2.5px solid var(--line);border-top-color:var(--sign-green);border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){
+    .spinner{animation:none;border-top-color:var(--line)}
+    .btn{transition:none}
+  }
+  .sec-note{font-size:.75rem;color:var(--ink-soft);margin:2px 0 12px}
+  .err-note{font-size:.83rem;color:var(--alert);padding:10px 0}
+
+  .wx-now{
+    display:flex;align-items:flex-start;gap:14px;
+    padding:12px 0 14px;border-bottom:1px dashed var(--line);
+  }
+  .wx-temp{
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:2.6rem;line-height:1;
+    color:var(--sky);
+  }
+  .wx-temp small{font-size:1.1rem;vertical-align:super}
+  .wx-desc{padding-top:4px}
+  .wx-desc .lead{font-weight:600;font-size:.95rem}
+  .wx-desc .sub{font-size:.8rem;color:var(--ink-soft);margin-top:3px;line-height:1.45}
+  .wx-period{
+    display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);
+    font-size:.85rem;
+  }
+  .wx-period:last-child{border-bottom:none}
+  .wx-period .when{
+    flex:0 0 84px;font-family:'Overpass',sans-serif;font-weight:700;font-size:.78rem;
+    text-transform:uppercase;letter-spacing:.03em;color:var(--sign-green);padding-top:2px;
+  }
+  .wx-period .t{font-weight:700}
+  .wx-period .d{color:var(--ink-soft);margin-top:2px;line-height:1.45;font-size:.8rem}
+
+  .alert-card{
+    border-left:5px solid var(--alert);
+    background:#FDF3F1;border-radius:0 10px 10px 0;
+    padding:11px 12px;margin-bottom:10px;
+  }
+  .alert-card.moderate{border-left-color:var(--sun);background:#FFFAEB}
+  .alert-card h3{font-family:'Overpass',sans-serif;font-size:.9rem;font-weight:800}
+  .alert-card .meta{font-family:'IBM Plex Mono',monospace;font-size:.66rem;color:var(--ink-soft);margin:4px 0 6px}
+  .alert-card p{font-size:.82rem;line-height:1.5;color:#3b2f2c}
+  .all-clear{
+    display:flex;align-items:center;gap:10px;padding:14px 2px;color:var(--sign-green);font-weight:600;font-size:.9rem;
+  }
+  .all-clear .dot{width:12px;height:12px;border-radius:50%;background:var(--sign-green)}
+
+  .poi{
+    display:flex;justify-content:space-between;gap:12px;
+    padding:11px 0;border-bottom:1px solid var(--line);
+  }
+  .poi:last-child{border-bottom:none}
+  .poi .nm{font-weight:600;font-size:.9rem}
+  .poi .kind{font-size:.75rem;color:var(--ink-soft);margin-top:2px;text-transform:capitalize}
+  .poi .dist{
+    flex:0 0 auto;font-family:'IBM Plex Mono',monospace;font-size:.7rem;color:var(--sign-green);
+    padding-top:3px;font-weight:500;
+  }
+
+  .news-item{padding:11px 0;border-bottom:1px solid var(--line)}
+  .news-item:last-child{border-bottom:none}
+  .news-item h3{font-size:.92rem;font-weight:600;line-height:1.35}
+  .news-item p{font-size:.82rem;color:var(--ink-soft);line-height:1.5;margin-top:4px}
+  .news-item .src{font-family:'IBM Plex Mono',monospace;font-size:.66rem;color:var(--sign-green);margin-top:5px}
+
+  /* zoom-out hint chip */
+  .hint-chip{
+    position:fixed;z-index:900;right:16px;top:16px;
+    background:var(--sign-green);color:#fff;
+    font-family:'Overpass',sans-serif;font-weight:600;font-size:.76rem;
+    padding:8px 13px;border-radius:99px;
+    box-shadow:var(--shadow);
+    opacity:0;pointer-events:none;transition:opacity .3s;
+  }
+  .hint-chip.show{opacity:1}
+
+  /* town markers */
+  .town-pin{
+    background:var(--sign-green);border:2px solid #fff;border-radius:50%;
+    box-shadow:0 2px 6px rgba(0,0,0,.35);
+  }
+  .here-pin{
+    background:var(--sun);border:3px solid var(--sign-green);border-radius:50%;
+    box-shadow:0 2px 8px rgba(0,0,0,.4);
+  }
+  .leaflet-tooltip.town-label{
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.72rem;
+    text-transform:uppercase;letter-spacing:.03em;
+    background:var(--paper);border:1.5px solid var(--sign-green);color:var(--sign-green);
+    border-radius:6px;
+  }
+
+  button:focus-visible,input:focus-visible,.tab:focus-visible{
+    outline:3px solid var(--sun);outline-offset:2px;
+  }
+
+  /* mobile: bottom sheet */
+  @media (max-width:640px){
+    .panel{
+      top:auto;left:0;right:0;bottom:0;width:100%;
+      height:62vh;border-radius:18px 18px 0 0;
+      transition:height .25s ease;
+    }
+    .panel.collapsed{height:118px}
+    .panel.collapsed .place-badge,
+    .panel.collapsed .tabs,
+    .panel.collapsed .content{display:none}
+    .sheet-toggle{
+      display:block;width:100%;background:var(--sign-green);border:0;cursor:pointer;padding:8px 0 2px;
+    }
+    .sheet-toggle::before{
+      content:"";display:block;width:44px;height:4px;border-radius:2px;
+      background:rgba(255,255,255,.55);margin:0 auto;
+    }
+    .hint-chip{top:12px;right:12px;left:12px;text-align:center}
+  }
+  .sheet-toggle{display:none}
+</style>
+</head>
+<body>
+
+<div id="map" role="application" aria-label="Map of the United States"></div>
+<div class="hint-chip" id="hintChip">Tap a town marker to explore it</div>
+
+<aside class="panel" id="panel">
+  <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
+  <div class="panel-head">
+    <div class="brand"><h1>Local Atlas</h1><span>USA</span></div>
+    <div class="searchrow">
+      <input id="q" type="text" placeholder="ZIP code or city, state" autocomplete="off"
+             aria-label="Search by ZIP code or city">
+      <button class="btn" id="goBtn">Go</button>
+    </div>
+    <div class="locrow">
+      <button class="btn ghost" id="geoBtn">⌖ Use my location</button>
+    </div>
+    <div class="search-msg" id="searchMsg" role="status"></div>
+  </div>
+
+  <div class="place-badge" id="placeBadge">
+    <div class="name" id="placeName"></div>
+    <div class="coords" id="placeCoords"></div>
+  </div>
+
+  <div class="tabs" role="tablist" id="tabs" style="display:none">
+    <button class="tab" role="tab" data-tab="weather" aria-selected="true">Weather</button>
+    <button class="tab" role="tab" data-tab="alerts" aria-selected="false">Alerts<span class="cnt" id="alertCnt" style="display:none"></span></button>
+    <button class="tab" role="tab" data-tab="news" aria-selected="false">News</button>
+    <button class="tab" role="tab" data-tab="services" aria-selected="false">Services</button>
+    <button class="tab" role="tab" data-tab="attractions" aria-selected="false">See &amp; Do</button>
+    <button class="tab" role="tab" data-tab="food" aria-selected="false">Eat</button>
+  </div>
+
+  <div class="content" id="content">
+    <div class="empty-state">
+      <h2>Pick a place to start</h2>
+      <p>Enter a ZIP code or a city name, or use your current location.
+         Your last place is remembered for next time.</p>
+      <p style="margin-top:10px">Once you're in, zoom out on the map and tap any
+         nearby town marker to explore it the same way.</p>
+    </div>
+  </div>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* =====================================================================
+   Local Atlas
+   Data sources (all keyless, browser-friendly):
+   - Tiles ......... CARTO light basemap over OpenStreetMap
+   - Geocoding ..... zippopotam.us (ZIP) + Nominatim (city / reverse)
+   - Weather ....... National Weather Service api.weather.gov
+   - Places ........ Overpass API (OpenStreetMap POIs)
+   - News .......... Claude API with web search
+   - Memory ........ window.storage (persists across sessions)
+===================================================================== */
+
+const $ = id => document.getElementById(id);
+const contentEl = $('content');
+const state = {
+  place: null,          // {lat, lon, name}
+  tab: 'weather',
+  cache: {},            // per-place fetched data
+  reqToken: 0,          // invalidates stale fetches when place changes
+};
+
+/* ---------------- map ---------------- */
+const map = L.map('map', { zoomControl:false }).setView([39.5, -98.35], 4);
+L.control.zoom({ position:'bottomright' }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+  maxZoom:19
+}).addTo(map);
+
+const hereIcon = L.divIcon({ className:'here-pin', iconSize:[18,18] });
+const townIcon = L.divIcon({ className:'town-pin', iconSize:[12,12] });
+let hereMarker = null;
+const townLayer  = L.layerGroup().addTo(map);
+const poiLayer   = L.layerGroup().addTo(map);
+
+/* ---------------- storage (best-effort) ----------------
+   Inside a claude.ai artifact, window.storage persists across sessions.
+   Deployed as a normal website, we fall back to the browser's localStorage. */
+const IN_CLAUDE_ARTIFACT = typeof window.storage !== 'undefined';
+async function saveLast(place){
+  const v = JSON.stringify(place);
+  try{
+    if(IN_CLAUDE_ARTIFACT){ await window.storage.set('last-place', v); return; }
+  }catch(e){}
+  try{ localStorage.setItem('last-place', v); }catch(e){}
+}
+async function loadLast(){
+  try{
+    if(IN_CLAUDE_ARTIFACT){
+      const r = await window.storage.get('last-place');
+      if(r && r.value) return JSON.parse(r.value);
+    }
+  }catch(e){}
+  try{
+    const v = localStorage.getItem('last-place');
+    return v ? JSON.parse(v) : null;
+  }catch(e){ return null; }
+}
+
+/* ---------------- helpers ---------------- */
+function msg(text, isErr){
+  const el = $('searchMsg');
+  el.textContent = text || '';
+  el.className = 'search-msg' + (isErr ? ' err' : '');
+}
+function haversine(lat1,lon1,lat2,lon2){
+  const R=3958.8, toR=Math.PI/180;
+  const dLat=(lat2-lat1)*toR, dLon=(lon2-lon1)*toR;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*toR)*Math.cos(lat2*toR)*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function esc(s){ return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function fetchJSON(url, opts){
+  const r = await fetch(url, opts);
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}
+
+/* ---------------- geocoding ---------------- */
+const STATE_ABBR = {AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',
+  CT:'Connecticut',DE:'Delaware',FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',
+  IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',
+  MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',
+  NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',
+  NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',
+  RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',
+  VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',
+  DC:'District of Columbia'};
+const STATE_NAME_TO_ABBR = Object.fromEntries(
+  Object.entries(STATE_ABBR).map(([a,n])=>[n.toLowerCase(), a]));
+
+async function geocode(query){
+  query = query.trim();
+  if(!query) throw new Error('Type a ZIP code or city name.');
+  if(/^\d{5}$/.test(query)){
+    const d = await fetchJSON('https://api.zippopotam.us/us/'+query);
+    const p = d.places[0];
+    return { lat:+p.latitude, lon:+p.longitude,
+             name:`${p['place name']}, ${p['state abbreviation']}` };
+  }
+  // "city" or "city, state" via Open-Meteo geocoding (CORS-friendly, keyless)
+  const parts = query.split(',').map(s=>s.trim()).filter(Boolean);
+  const cityQ = parts[0];
+  let wantState = null;
+  if(parts[1]){
+    const s = parts[1];
+    wantState = STATE_ABBR[s.toUpperCase()] || (STATE_NAME_TO_ABBR[s.toLowerCase()] ? s : null);
+    if(wantState === null && s.length) wantState = s; // pass through as-is, best effort
+  }
+  const url = 'https://geocoding-api.open-meteo.com/v1/search?count=10&language=en&format=json&name='
+            + encodeURIComponent(cityQ);
+  const d = await fetchJSON(url);
+  let hits = (d.results||[]).filter(r=>r.country_code==='US');
+  if(wantState){
+    const wsLower = String(wantState).toLowerCase();
+    const filtered = hits.filter(r=>(r.admin1||'').toLowerCase() === wsLower);
+    if(filtered.length) hits = filtered;
+  }
+  if(!hits.length) throw new Error('No US match for “'+query+'”. Try “city, state”.');
+  const hit = hits[0];
+  const abbr = STATE_NAME_TO_ABBR[(hit.admin1||'').toLowerCase()] || hit.admin1 || '';
+  return { lat:hit.latitude, lon:hit.longitude,
+           name: abbr ? `${hit.name}, ${abbr}` : hit.name };
+}
+
+async function reverseName(lat, lon){
+  try{
+    const d = await fetchJSON(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+    const town = d.city || d.locality || 'Unknown place';
+    const st = d.principalSubdivisionCode ? d.principalSubdivisionCode.replace(/^US-/,'')
+             : d.principalSubdivision || '';
+    return st ? `${town}, ${st}` : town;
+  }catch(e){ return `${lat.toFixed(3)}, ${lon.toFixed(3)}`; }
+}
+
+/* ---------------- load a place ---------------- */
+async function loadPlace(place, { fly=true } = {}){
+  state.place = place;
+  state.cache = {};
+  const token = ++state.reqToken;
+  saveLast(place);
+
+  $('placeBadge').style.display = 'block';
+  $('placeName').textContent = place.name;
+  $('placeCoords').textContent = place.lat.toFixed(4)+'°N  '+Math.abs(place.lon).toFixed(4)+'°W';
+  $('tabs').style.display = 'flex';
+  $('alertCnt').style.display = 'none';
+  msg('');
+
+  if(hereMarker) hereMarker.remove();
+  hereMarker = L.marker([place.lat, place.lon], { icon:hereIcon, zIndexOffset:1000 })
+    .addTo(map).bindTooltip(place.name, { className:'town-label', direction:'top', offset:[0,-10] });
+  if(fly) map.flyTo([place.lat, place.lon], 12, { duration:1.2 });
+
+  selectTab(state.tab, true);
+  // prefetch alerts so the badge count shows even before that tab is opened
+  getAlerts(token).then(a => {
+    if(token !== state.reqToken) return;
+    if(a && a.length){ const c=$('alertCnt'); c.textContent=a.length; c.style.display='inline-block'; }
+  }).catch(()=>{});
+}
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click', ()=> selectTab(t.dataset.tab));
+});
+function selectTab(name, force){
+  if(name === state.tab && !force) return;
+  state.tab = name;
+  document.querySelectorAll('.tab').forEach(t=>
+    t.setAttribute('aria-selected', String(t.dataset.tab===name)));
+  renderTab(name);
+}
+function showLoading(text){
+  contentEl.innerHTML = `<div class="loading"><div class="spinner"></div>${esc(text)}</div>`;
+}
+function showError(text){
+  contentEl.innerHTML = `<div class="err-note">${esc(text)}</div>`;
+}
+
+async function renderTab(name){
+  if(!state.place) return;
+  const token = state.reqToken;
+  poiLayer.clearLayers();
+  try{
+    if(name==='weather'){
+      showLoading('Checking the National Weather Service…');
+      const wx = await getWeather(token);
+      if(token!==state.reqToken || state.tab!=='weather') return;
+      renderWeather(wx);
+    }else if(name==='alerts'){
+      showLoading('Checking active alerts…');
+      const a = await getAlerts(token);
+      if(token!==state.reqToken || state.tab!=='alerts') return;
+      renderAlerts(a);
+    }else if(name==='news'){
+      showLoading('Searching local news… (10–20 s)');
+      const n = await getNews(token);
+      if(token!==state.reqToken || state.tab!=='news') return;
+      renderNews(n);
+    }else{
+      const labels = { services:'public services', attractions:'things to see', food:'places to eat' };
+      showLoading('Finding '+labels[name]+' nearby…');
+      const pois = await getPOIs(name, token);
+      if(token!==state.reqToken || state.tab!==name) return;
+      renderPOIs(pois, name);
+    }
+  }catch(e){
+    if(token!==state.reqToken) return;
+    showError('Couldn’t load this section ('+ e.message +'). Try again in a moment.');
+  }
+}
+
+/* ---------------- weather (NWS) ---------------- */
+async function getWeather(){
+  if(state.cache.weather) return state.cache.weather;
+  const { lat, lon } = state.place;
+  const pt = await fetchJSON(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
+  const fc = await fetchJSON(pt.properties.forecast);
+  state.cache.weather = fc.properties.periods.slice(0, 6);
+  return state.cache.weather;
+}
+function renderWeather(periods){
+  if(!periods || !periods.length){ showError('No forecast available for this point.'); return; }
+  const now = periods[0];
+  let html = `
+    <div class="wx-now">
+      <div class="wx-temp">${esc(now.temperature)}<small>°${esc(now.temperatureUnit)}</small></div>
+      <div class="wx-desc">
+        <div class="lead">${esc(now.shortForecast)} · ${esc(now.name)}</div>
+        <div class="sub">${esc(now.detailedForecast)}</div>
+      </div>
+    </div>`;
+  for(const p of periods.slice(1)){
+    html += `
+      <div class="wx-period">
+        <div class="when">${esc(p.name)}</div>
+        <div>
+          <div class="t">${esc(p.temperature)}°${esc(p.temperatureUnit)} — ${esc(p.shortForecast)}</div>
+          <div class="d">${esc(p.detailedForecast)}</div>
+        </div>
+      </div>`;
+  }
+  html += `<div class="sec-note">Forecast: National Weather Service</div>`;
+  contentEl.innerHTML = html;
+}
+
+/* ---------------- alerts (NWS) ---------------- */
+async function getAlerts(){
+  if(state.cache.alerts) return state.cache.alerts;
+  const { lat, lon } = state.place;
+  const d = await fetchJSON(`https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`);
+  state.cache.alerts = (d.features||[]).map(f=>f.properties);
+  return state.cache.alerts;
+}
+function renderAlerts(alerts){
+  if(!alerts.length){
+    contentEl.innerHTML = `
+      <div class="all-clear"><div class="dot"></div>No active weather alerts here.</div>
+      <div class="sec-note">Checked against National Weather Service active alerts.</div>`;
+    return;
+  }
+  let html = '';
+  for(const a of alerts){
+    const sev = (a.severity||'').toLowerCase();
+    const cls = (sev==='severe'||sev==='extreme') ? '' : ' moderate';
+    const until = a.ends || a.expires;
+    html += `
+      <div class="alert-card${cls}">
+        <h3>${esc(a.event)}</h3>
+        <div class="meta">${esc(a.severity||'')} · until ${until ? new Date(until).toLocaleString() : 'further notice'}</div>
+        <p>${esc(a.headline || a.description?.slice(0,280) || '')}</p>
+      </div>`;
+  }
+  html += `<div class="sec-note">Source: National Weather Service</div>`;
+  contentEl.innerHTML = html;
+}
+
+/* ---------------- POIs (Overpass) ---------------- */
+const POI_FILTERS = {
+  services: `
+    node["amenity"~"^(hospital|clinic|police|fire_station|library|townhall|post_office|pharmacy|community_centre)$"](around:R,LAT,LON);
+    way["amenity"~"^(hospital|clinic|police|fire_station|library|townhall|post_office|pharmacy|community_centre)$"](around:R,LAT,LON);`,
+  attractions: `
+    node["tourism"~"^(attraction|museum|viewpoint|gallery|zoo|theme_park|aquarium)$"](around:R,LAT,LON);
+    way["tourism"~"^(attraction|museum|viewpoint|gallery|zoo|theme_park|aquarium)$"](around:R,LAT,LON);
+    way["leisure"="park"]["name"](around:R,LAT,LON);`,
+  food: `
+    node["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream|bakery)$"](around:R,LAT,LON);
+    way["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream)$"](around:R,LAT,LON);`
+};
+async function getPOIs(kind){
+  const key = 'poi_'+kind;
+  if(state.cache[key]) return state.cache[key];
+  const { lat, lon } = state.place;
+  const body = '[out:json][timeout:25];(' +
+    POI_FILTERS[kind].replaceAll('R','7000').replaceAll('LAT',lat).replaceAll('LON',lon) +
+    ');out center 60;';
+  const d = await fetchJSON('https://overpass-api.de/api/interpreter', {
+    method:'POST', body:'data='+encodeURIComponent(body),
+    headers:{'Content-Type':'application/x-www-form-urlencoded'}
+  });
+  const items = (d.elements||[])
+    .map(e=>{
+      const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon;
+      const name = e.tags?.name;
+      if(!name || la==null) return null;
+      const kindLabel = (e.tags.amenity || e.tags.tourism || e.tags.leisure || '').replaceAll('_',' ');
+      return { name, kind:kindLabel, lat:la, lon:lo, dist:haversine(lat,lon,la,lo) };
+    })
+    .filter(Boolean)
+    .sort((a,b)=>a.dist-b.dist);
+  // de-dup by name
+  const seen = new Set(), out = [];
+  for(const it of items){ if(!seen.has(it.name)){ seen.add(it.name); out.push(it); } if(out.length>=30) break; }
+  state.cache[key] = out;
+  return out;
+}
+function renderPOIs(items, kind){
+  poiLayer.clearLayers();
+  if(!items.length){
+    contentEl.innerHTML = `<div class="empty-state"><p>Nothing mapped in this category within a few miles.
+      Try a larger town nearby, or a different category.</p></div>`;
+    return;
+  }
+  let html = `<div class="sec-note">${items.length} places within ~4.5 miles · also pinned on the map</div>`;
+  for(const it of items){
+    html += `
+      <div class="poi">
+        <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}</div></div>
+        <div class="dist">${it.dist.toFixed(1)} mi</div>
+      </div>`;
+    L.circleMarker([it.lat, it.lon], {
+      radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9
+    }).addTo(poiLayer).bindTooltip(it.name);
+  }
+  contentEl.innerHTML = html;
+}
+
+/* ---------------- news ----------------
+   Inside claude.ai: live web search through the Claude API.
+   Deployed standalone: Google News local RSS via a CORS-friendly proxy. */
+async function getNews(){
+  if(state.cache.news) return state.cache.news;
+  if(!IN_CLAUDE_ARTIFACT) return getNewsRSS();
+  try{ return await getNewsClaude(); }
+  catch(e){ return getNewsRSS(); }
+}
+async function getNewsRSS(){
+  const city = state.place.name;
+  const feed = `https://news.google.com/rss/search?q=${encodeURIComponent('"'+city.split(',')[0]+'" local news')}&hl=en-US&gl=US&ceid=US:en`;
+  const prox = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(feed);
+  const r = await fetch(prox);
+  if(!r.ok) throw new Error('news feed unavailable');
+  const xml = new DOMParser().parseFromString(await r.text(), 'text/xml');
+  const items = [...xml.querySelectorAll('item')].slice(0, 8).map(it=>{
+    const rawTitle = it.querySelector('title')?.textContent || '';
+    const src = it.querySelector('source')?.textContent
+             || (rawTitle.includes(' - ') ? rawTitle.split(' - ').pop() : '');
+    const title = rawTitle.includes(' - ') ? rawTitle.split(' - ').slice(0,-1).join(' - ') : rawTitle;
+    const when = it.querySelector('pubDate')?.textContent;
+    return {
+      title, source: src,
+      summary: when ? new Date(when).toLocaleString() : '',
+      link: it.querySelector('link')?.textContent || ''
+    };
+  });
+  state.cache.news = items;
+  return items;
+}
+async function getNewsClaude(){
+  const prompt =
+`Search the web for the latest local news for ${state.place.name}, USA.
+Respond ONLY with a JSON array (no markdown, no prose) of up to 6 items:
+[{"title":"...","summary":"one or two sentences in your own words","source":"outlet name"}]
+Focus on genuinely local stories (city government, schools, events, development, public safety).`;
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens:1000,
+      messages:[{role:'user',content:prompt}],
+      tools:[{type:'web_search_20250305',name:'web_search'}]
+    })
+  });
+  const data = await r.json();
+  const text = (data.content||[]).map(b=>b.type==='text'?b.text:'').join('\n');
+  let items = [];
+  try{
+    const m = text.match(/\[[\s\S]*\]/);
+    items = JSON.parse(m ? m[0] : text.replace(/```json|```/g,'').trim());
+  }catch(e){
+    if(text.trim()) items = [{ title:'Local news roundup', summary:text.trim().slice(0,600), source:'' }];
+  }
+  state.cache.news = items;
+  return items;
+}
+function renderNews(items){
+  if(!items || !items.length){ showError('No local news found right now.'); return; }
+  let html = '';
+  for(const n of items){
+    const title = n.link
+      ? `<a href="${esc(n.link)}" target="_blank" rel="noopener" style="color:inherit">${esc(n.title)}</a>`
+      : esc(n.title);
+    html += `
+      <div class="news-item">
+        <h3>${title}</h3>
+        ${n.summary ? `<p>${esc(n.summary)}</p>` : ''}
+        ${n.source ? `<div class="src">${esc(n.source)}</div>` : ''}
+      </div>`;
+  }
+  html += `<div class="sec-note">Live headline search — open the outlets for full stories.</div>`;
+  contentEl.innerHTML = html;
+}
+
+/* ---------------- nearby towns when zoomed out ---------------- */
+let townTimer = null;
+map.on('moveend zoomend', () => {
+  const z = map.getZoom();
+  const chip = $('hintChip');
+  if(z >= 10){ townLayer.clearLayers(); chip.classList.remove('show'); return; }
+  if(state.place) chip.classList.add('show');
+  clearTimeout(townTimer);
+  townTimer = setTimeout(loadTowns, 500);
+});
+async function loadTowns(){
+  const z = map.getZoom();
+  if(z >= 10 || z < 5) { if(z<5) townLayer.clearLayers(); return; }
+  const b = map.getBounds();
+  const bbox = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(v=>v.toFixed(3)).join(',');
+  const placeTypes = z <= 7 ? 'city' : 'city|town';
+  const body = `[out:json][timeout:20];node["place"~"^(${placeTypes})$"](${bbox});out 50;`;
+  try{
+    const d = await fetchJSON('https://overpass-api.de/api/interpreter', {
+      method:'POST', body:'data='+encodeURIComponent(body),
+      headers:{'Content-Type':'application/x-www-form-urlencoded'}
+    });
+    townLayer.clearLayers();
+    for(const e of (d.elements||[])){
+      if(!e.tags?.name) continue;
+      const mk = L.marker([e.lat, e.lon], { icon:townIcon })
+        .bindTooltip(e.tags.name, { className:'town-label', direction:'top', offset:[0,-8] });
+      mk.on('click', async ()=>{
+        const name = await reverseName(e.lat, e.lon);
+        loadPlace({ lat:e.lat, lon:e.lon, name: name.includes(',') ? name : e.tags.name });
+      });
+      mk.addTo(townLayer);
+    }
+  }catch(e){ /* overpass hiccup — towns just don't appear this pass */ }
+}
+
+/* ---------------- search + geolocation ---------------- */
+async function runSearch(){
+  const q = $('q').value;
+  try{
+    msg('Looking up…');
+    const place = await geocode(q);
+    $('q').value = '';
+    loadPlace(place);
+  }catch(e){ msg(e.message, true); }
+}
+$('goBtn').addEventListener('click', runSearch);
+$('q').addEventListener('keydown', e => { if(e.key==='Enter') runSearch(); });
+
+async function locateByIP(){
+  // approximate location from the network address — works even where the
+  // browser geolocation API is blocked (e.g. sandboxed embeds)
+  const providers = [
+    async ()=>{ const d = await fetchJSON('https://ipwho.is/');
+                if(!d.success) throw new Error('ipwho failed');
+                return { lat:d.latitude, lon:d.longitude }; },
+    async ()=>{ const d = await fetchJSON('https://get.geojs.io/v1/ip/geo.json');
+                return { lat:+d.latitude, lon:+d.longitude }; }
+  ];
+  for(const p of providers){
+    try{
+      const r = await p();
+      if(Number.isFinite(r.lat) && Number.isFinite(r.lon)) return r;
+    }catch(e){}
+  }
+  throw new Error('no IP location');
+}
+
+$('geoBtn').addEventListener('click', async ()=>{
+  msg('Finding your location…');
+  // 1) try the precise browser API (may be blocked in embedded views)
+  const precise = await new Promise(resolve=>{
+    if(!navigator.geolocation) return resolve(null);
+    let done = false;
+    const finish = v => { if(!done){ done = true; resolve(v); } };
+    try{
+      navigator.geolocation.getCurrentPosition(
+        pos => finish({ lat:pos.coords.latitude, lon:pos.coords.longitude }),
+        ()  => finish(null),
+        { enableHighAccuracy:false, timeout:6000 });
+      setTimeout(()=>finish(null), 7000);
+    }catch(e){ finish(null); }
+  });
+  try{
+    const loc = precise || await locateByIP();
+    const name = await reverseName(loc.lat, loc.lon);
+    loadPlace({ lat:loc.lat, lon:loc.lon, name });
+    if(!precise) msg('Using approximate location from your network — search a ZIP for an exact spot.');
+  }catch(e){
+    msg('Couldn’t determine your location — search by ZIP or city instead.', true);
+  }
+});
+
+/* ---------------- mobile sheet toggle ---------------- */
+$('sheetToggle').addEventListener('click', ()=> $('panel').classList.toggle('collapsed'));
+
+/* ---------------- boot: restore last place ---------------- */
+(async ()=>{
+  const last = await loadLast();
+  if(last && typeof last.lat==='number'){
+    loadPlace(last, { fly:false });
+    map.setView([last.lat, last.lon], 12);
+  }
+})();
+</script>
+</body>
+</html>

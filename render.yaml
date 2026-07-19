@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: local-atlas
+    runtime: static
+    buildCommand: ""
+    staticPublishPath: .
