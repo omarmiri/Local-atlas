@@ -16,6 +16,7 @@ const FSQ = process.env.FSQ_API_KEY || '';
 const TM = process.env.TICKETMASTER_API_KEY || '';
 const CENSUS = process.env.CENSUS_API_KEY || '';
 const AI = process.env.GEMINI_API_KEY || '';
+const OWM = process.env.OPENWEATHER_API_KEY || '';
 const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';  // cheapest tier, auto-tracks latest
 
 /* ---- tiny TTL cache ---- */
@@ -30,7 +31,7 @@ function cached(key, ttlMs, fn){
   });
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI }));
+app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM }));
 
 /* ---- Foursquare places ---- */
 const FSQ_CATS = {
@@ -258,6 +259,44 @@ app.get('/api/radar/tile', async (req, res) => {
       return Buffer.from(await rr.arrayBuffer());
     });
     res.type('image/png').send(buf);
+  }catch(e){ res.status(502).send(''); }
+});
+
+/* ---- OpenWeatherMap tile proxy (clouds / temperature; key stays server-side) ---- */
+app.get('/api/wx-tile', async (req, res) => {
+  try{
+    if(!OWM) return res.status(503).send('');
+    const { layer, z, x, y } = req.query;
+    if(!['clouds_new','temp_new','wind_new','pressure_new'].includes(String(layer))) throw new Error('bad layer');
+    if(![z, x, y].every(v => /^\d+$/.test(String(v)))) throw new Error('bad coords');
+    const url = `https://tile.openweathermap.org/map/${layer}/${z}/${x}/${y}.png?appid=${OWM}`;
+    const buf = await cached('owm:' + url, 10 * 60e3, async () => {
+      const rr = await fetch(url);
+      if(!rr.ok) throw new Error('OWM HTTP ' + rr.status);
+      return Buffer.from(await rr.arrayBuffer());
+    });
+    res.type('image/png').send(buf);
+  }catch(e){ res.status(502).send(''); }
+});
+
+/* ---- NASA GIBS tile proxy (satellite true-color, fire hotspots; keyless) ---- */
+const GIBS_LAYERS = {
+  satellite: { id:'VIIRS_SNPP_CorrectedReflectance_TrueColor', tms:'GoogleMapsCompatible_Level9', ext:'jpg' },
+  fires:     { id:'VIIRS_SNPP_Thermal_Anomalies_375m_All',     tms:'GoogleMapsCompatible_Level8', ext:'png' }
+};
+app.get('/api/gibs-tile', async (req, res) => {
+  try{
+    const L = GIBS_LAYERS[String(req.query.layer)];
+    const { z, x, y } = req.query;
+    if(!L) throw new Error('bad layer');
+    if(![z, x, y].every(v => /^\d+$/.test(String(v)))) throw new Error('bad coords');
+    const url = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${L.id}/default/default/${L.tms}/${z}/${y}/${x}.${L.ext}`;
+    const buf = await cached('gibs:' + url, 30 * 60e3, async () => {
+      const rr = await fetch(url);
+      if(!rr.ok) throw new Error('GIBS HTTP ' + rr.status);
+      return Buffer.from(await rr.arrayBuffer());
+    });
+    res.type(L.ext === 'jpg' ? 'image/jpeg' : 'image/png').send(buf);
   }catch(e){ res.status(502).send(''); }
 });
 

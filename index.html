@@ -146,6 +146,19 @@
     padding:6px 12px;border-radius:99px;cursor:pointer;box-shadow:var(--shadow);
   }
   .radar-btn[aria-pressed="true"]{background:var(--sign-green);color:#fff}
+  .layerbox{position:fixed;z-index:900;right:16px;top:60px}
+  .layerbox .radar-btn{position:static}
+  .layer-menu{
+    margin-top:6px;display:flex;flex-direction:column;gap:5px;
+    background:var(--paper);border:2px solid var(--sign-green);border-radius:12px;
+    padding:8px;box-shadow:var(--shadow);
+  }
+  .layer-menu button{
+    border:1.5px solid var(--line);background:#fff;color:var(--ink);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.72rem;
+    border-radius:8px;padding:7px 10px;cursor:pointer;text-align:left;white-space:nowrap;
+  }
+  .layer-menu button[aria-pressed="true"]{background:var(--sign-green);border-color:var(--sign-green);color:#fff}
   .social-item{padding:11px 0;border-bottom:1px solid var(--line)}
   .social-item:last-child{border-bottom:none}
   .social-item h3{font-size:.9rem;font-weight:600;line-height:1.4}
@@ -451,7 +464,16 @@
 <div id="map" role="application" aria-label="Map of the United States and Canada"></div>
 <div class="hint-chip" id="hintChip">Tap anywhere on the map to explore that area</div>
 <button class="reopen" id="reopenBtn">◂ Local Atlas</button>
-<button class="radar-btn" id="radarBtn" aria-pressed="false">☂ Radar</button>
+<div class="layerbox">
+  <button class="radar-btn" id="layersBtn" aria-expanded="false">◐ Layers</button>
+  <div class="layer-menu" id="layerMenu" hidden>
+    <button data-layer="radar" aria-pressed="false">☂ Rain radar</button>
+    <button data-layer="satellite" aria-pressed="false">🛰 Satellite · clouds &amp; smoke</button>
+    <button data-layer="clouds" aria-pressed="false">☁ Clouds (live)</button>
+    <button data-layer="temp" aria-pressed="false">🌡 Temperature</button>
+    <button data-layer="fires" aria-pressed="false">🔥 Fire hotspots</button>
+  </div>
+</div>
 
 <aside class="panel" id="panel">
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
@@ -541,9 +563,9 @@ state.backendP = (async ()=>{
     const ctl = new AbortController();
     setTimeout(()=>ctl.abort(), 4000);
     const r = await fetch('/api/health', { signal: ctl.signal });
-    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, tm:!!j.tm, ai:!!j.ai }; }
+    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, tm:!!j.tm, ai:!!j.ai, owm:!!j.owm }; }
   }catch(e){}
-  return { ok:false, fsq:false, tm:false, ai:false };
+  return { ok:false, fsq:false, tm:false, ai:false, owm:false };
 })();
 
 /* ---------------- map ---------------- */
@@ -2025,41 +2047,74 @@ $('geoBtn').addEventListener('click', async ()=>{
   }
 });
 
-/* ---------------- weather radar overlay (RainViewer) ---------------- */
-let radarLayer = null;
-$('radarBtn').addEventListener('click', async ()=>{
-  const btn = $('radarBtn');
-  if(radarLayer){
-    radarLayer.remove(); radarLayer = null;
-    btn.setAttribute('aria-pressed','false');
-    btn.textContent = '☂ Radar';
-    return;
-  }
-  btn.textContent = '☂ Loading…';
-  try{
-    const be = await state.backendP;
-    const d = be.ok
-      ? await fetchJSON('/api/radar/meta')
-      : await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
+/* ---------------- map overlay layers ---------------- */
+const overlayLayers = {};      // name -> live Leaflet layer
+const TRANSPARENT_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const GIBS_DIRECT = {
+  satellite: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/default/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg',
+  fires:     'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Thermal_Anomalies_375m_All/default/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png'
+};
+async function makeOverlay(name){
+  const be = await state.backendP;
+  if(name === 'radar'){
+    const d = be.ok ? await fetchJSON('/api/radar/meta')
+                    : await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
     const fr = d.radar?.past?.slice(-1)[0];
-    if(!fr || !fr.path) throw new Error('no frames');
-    const tileURL = be.ok
+    if(!fr?.path) throw new Error('no radar frames');
+    const url = be.ok
       ? `/api/radar/tile?p=${encodeURIComponent(fr.path)}&z={z}&x={x}&y={y}`
       : `${d.host || 'https://tilecache.rainviewer.com'}${fr.path}/512/{z}/{x}/{y}/2/1_1.png`;
-    radarLayer = L.tileLayer(tileURL, {
-      opacity:.65, attribution:'RainViewer',
-      tileSize:512, zoomOffset:-1,   // free tier serves 512px tiles
-      maxNativeZoom:7, maxZoom:19    // free tier caps at zoom 7; upscale beyond it
-    }).addTo(map);
-    btn.setAttribute('aria-pressed','true');
-    btn.textContent = '☂ Radar on';
-  }catch(e){
-    btn.textContent = '☂ Radar blocked';
-    setTimeout(()=>{ btn.textContent = '☂ Radar'; }, 2500);
+    return L.tileLayer(url, { opacity:.65, tileSize:512, zoomOffset:-1,
+      maxNativeZoom:7, maxZoom:19, attribution:'RainViewer' });
   }
+  if(name === 'clouds' || name === 'temp'){
+    if(!be.owm) throw new Error('needs OpenWeather key');
+    const lyr = name === 'clouds' ? 'clouds_new' : 'temp_new';
+    return L.tileLayer(`/api/wx-tile?layer=${lyr}&z={z}&x={x}&y={y}`,
+      { opacity: name === 'temp' ? .5 : .8, maxZoom:19,
+        errorTileUrl:TRANSPARENT_PNG, attribution:'OpenWeatherMap' });
+  }
+  if(name === 'satellite' || name === 'fires'){
+    const url = be.ok ? `/api/gibs-tile?layer=${name}&z={z}&x={x}&y={y}` : GIBS_DIRECT[name];
+    return L.tileLayer(url, { opacity: name === 'fires' ? .9 : .8,
+      maxNativeZoom: name === 'satellite' ? 9 : 8, maxZoom:19,
+      errorTileUrl:TRANSPARENT_PNG, attribution:'NASA GIBS' });
+  }
+  throw new Error('unknown layer');
+}
+$('layersBtn').addEventListener('click', ()=>{
+  const menu = $('layerMenu');
+  const open = menu.hidden;
+  menu.hidden = !open;
+  $('layersBtn').setAttribute('aria-expanded', String(open));
+});
+document.querySelectorAll('#layerMenu button').forEach(btn=>{
+  btn.addEventListener('click', async ()=>{
+    const name = btn.dataset.layer;
+    if(overlayLayers[name]){
+      overlayLayers[name].remove();
+      delete overlayLayers[name];
+      btn.setAttribute('aria-pressed','false');
+      return;
+    }
+    const label = btn.textContent;
+    btn.textContent = '… loading';
+    try{
+      const layer = await makeOverlay(name);
+      overlayLayers[name] = layer.addTo(map);
+      btn.textContent = label;
+      btn.setAttribute('aria-pressed','true');
+    }catch(e){
+      btn.textContent = /key/.test(e.message) ? label + ' — needs key' : label + ' — unavailable';
+      setTimeout(()=>{ btn.textContent = label; }, 2500);
+    }
+  });
+});
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.layerbox')) $('layerMenu').hidden = true;
 });
 
-/* ---------------- panel show/hide ---------------- */
+/* ---------------- panel show/hide ---------------- *//* ---------------- panel show/hide ---------------- */
 function refreshMapSize(){ setTimeout(()=>map.invalidateSize(), 320); }
 function hidePanel(){
   $('panel').classList.add('slid');
