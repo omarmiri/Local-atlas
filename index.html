@@ -179,7 +179,13 @@
   .panel.headmini .locrow,
   .panel.headmini .recents,
   .panel.headmini .search-msg{display:none}
-  .panel.headmini .panel-head{padding-bottom:10px}
+  .panel.headmini .panel-head{padding:8px 16px}
+  .panel.headmini .brand h1{font-size:.92rem}
+  @media (max-width:640px){
+    .place-badge{margin-top:12px;padding:7px 12px 6px}
+    .place-badge .name{font-size:1.05rem}
+    .place-badge .coords{display:none}
+  }
 
   /* place badge — the route-marker signature */
   .place-badge{
@@ -633,6 +639,9 @@ async function loadPlace(place, { fly=true } = {}){
   updateHash(place);
   pushRecent(place);
 
+  $('panel').classList.add('headmini');
+  $('headToggle').textContent = '▾';
+  $('headToggle').title = 'Show search';
   $('placeBadge').style.display = 'block';
   $('placeName').textContent = place.name;
   $('placeCoords').textContent = place.lat.toFixed(4)+'°N  '+Math.abs(place.lon).toFixed(4)+'°W';
