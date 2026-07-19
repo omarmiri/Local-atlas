@@ -28,7 +28,7 @@ remembered between visits.
    - `FSQ_API_KEY` — Foursquare Places (places coverage, photos, ratings)
    - `TICKETMASTER_API_KEY` — events tab
    - `CENSUS_API_KEY` — optional; raises rate limits on the county-profile lookups
-   - `PERPLEXITY_API_KEY` — the AI "Brief" tab (uses the base `sonar` model)
+   - `GEMINI_API_KEY` — the AI "Brief" tab (Gemini Flash-Lite, cheapest tier; free key at aistudio.google.com). Optional `GEMINI_MODEL` overrides the model.
 4. Deploy. Every feature degrades gracefully when its key is absent.
 
 Without `FSQ_API_KEY`, everything still works from OpenStreetMap — Foursquare

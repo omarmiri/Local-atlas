@@ -15,7 +15,8 @@ const PORT = process.env.PORT || 10000;
 const FSQ = process.env.FSQ_API_KEY || '';
 const TM = process.env.TICKETMASTER_API_KEY || '';
 const CENSUS = process.env.CENSUS_API_KEY || '';
-const AI = process.env.PERPLEXITY_API_KEY || '';
+const AI = process.env.GEMINI_API_KEY || '';
+const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';  // cheapest tier, auto-tracks latest
 
 /* ---- tiny TTL cache ---- */
 const cache = new Map();
@@ -205,31 +206,29 @@ app.get('/api/fsqdetails', async (req, res) => {
 /* ---- AI town brief (Anthropic; cached per place per 6 h) ---- */
 app.post('/api/brief', express.json({ limit: '200kb' }), async (req, res) => {
   try{
-    if(!AI) return res.status(503).json({ error: 'PERPLEXITY_API_KEY not set' });
+    if(!AI) return res.status(503).json({ error: 'GEMINI_API_KEY not set' });
     const { name = '', country = 'US', data = {} } = req.body || {};
     if(!name) return res.status(400).json({ error: 'name required' });
     const key = 'brief:' + name + ':' + new Date().toISOString().slice(0, 10);
     const text = await cached(key, 6 * 3600e3, async () => {
-      const rr = await fetch('https://api.perplexity.ai/chat/completions', {
+      const rr = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent?key=${AI}`, {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + AI, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          model: 'sonar',                       // Perplexity's cheapest model
-          max_tokens: 700,
-          messages: [
-            { role: 'system', content:
-              'You write compact local-town briefings. Plain text only, no markdown symbols, no preamble.' },
-            { role: 'user', content:
-`Write a compact local briefing for ${name} (${country}). Ground it in the data below; you may add current local context from search where helpful. Four short sections titled OVERVIEW, NEWS, COMMUNITY, THIS WEEK, each 2-3 sentences. Lead with any active weather alerts.
+          systemInstruction: { parts: [{ text:
+            'You write compact local-town briefings. Plain text only, no markdown symbols, no preamble.' }] },
+          contents: [{ role: 'user', parts: [{ text:
+`Write a compact local briefing for ${name} (${country}). Use ONLY the data below. Four short sections titled OVERVIEW, NEWS, COMMUNITY, THIS WEEK, each 2-3 sentences. Lead with any active weather alerts.
 
 DATA:
-${JSON.stringify(data).slice(0, 12000)}` }
-          ]
+${JSON.stringify(data).slice(0, 12000)}` }] }],
+          generationConfig: { maxOutputTokens: 700 }
         })
       });
-      if(!rr.ok) throw new Error('Perplexity HTTP ' + rr.status);
+      if(!rr.ok) throw new Error('Gemini HTTP ' + rr.status);
       const j = await rr.json();
-      return (j.choices?.[0]?.message?.content || '').trim();
+      return (j.candidates?.[0]?.content?.parts || []).map(pt => pt.text || '').join('').trim();
     });
     res.json({ text });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
