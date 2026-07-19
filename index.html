@@ -805,9 +805,11 @@ async function renderTab(name){
       renderEvents(ev);
     }else if(name==='brief'){
       showLoading('Writing your local brief… (10–20 s)');
-      const t = await getBrief();
+      let t = null, aiFailed = false;
+      try{ t = await getBrief(); }catch(e){ aiFailed = true; }
       if(token!==state.reqToken || state.tab!=='brief') return;
-      renderBrief(t);
+      if(aiFailed) await renderBriefFallback();
+      else renderBrief(t);
     }else if(name==='saved'){
       await renderSavedTab();
     }else{
@@ -1570,6 +1572,26 @@ function renderBrief(text){
     .replace(/\n/g, '<br>');
   contentEl.innerHTML = `<div class="brief"><p>${html}</p></div>
     <div class="sec-note">AI-generated from live local data — may contain errors.</div>`;
+}
+
+/* When the AI call fails (credits exhausted, service down), fall back to a
+   plain data digest built from what we already fetched — the tab never dies. */
+async function renderBriefFallback(){
+  const [alerts, news, social, events] = await Promise.all([
+    getAlerts().catch(()=>[]), getNews().catch(()=>[]),
+    getSocial().catch(()=>[]), getEvents().catch(()=>[])
+  ]);
+  const sec = (title, lines) => lines && lines.length
+    ? `<span class="bhead">${title}</span><p>${lines.map(esc).join('<br>')}</p>` : '';
+  const wx = state.cache.weather?.[0];
+  let html = `<div class="sec-note">AI brief unavailable right now (service or credit issue) — here's the raw rundown:</div><div class="brief">`;
+  html += sec('WEATHER', wx ? [wx.temperature + '°' + wx.temperatureUnit + ' — ' + wx.shortForecast] : null);
+  html += sec('ALERTS', (alerts||[]).slice(0,4).map(a=>a.event));
+  html += sec('NEWS', (news||[]).slice(0,5).map(n=>n.title));
+  html += sec('COMMUNITY', (social||[]).slice(0,5).map(p=>p.title));
+  html += sec('THIS WEEK', (events||[]).slice(0,5).map(e=>e.name + (e.date ? ' — ' + e.date : '')));
+  html += `</div>`;
+  contentEl.innerHTML = html;
 }
 
 /* ---------------- saved places ---------------- */
