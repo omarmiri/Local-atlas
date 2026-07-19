@@ -237,9 +237,18 @@
   .all-clear .dot{width:12px;height:12px;border-radius:50%;background:var(--sign-green)}
 
   .poi{
-    display:flex;justify-content:space-between;gap:12px;
-    padding:11px 0;border-bottom:1px solid var(--line);
+    display:block;
+    border-bottom:1px solid var(--line);
   }
+  .poi summary{
+    list-style:none;cursor:pointer;
+    display:flex;justify-content:space-between;gap:12px;
+    padding:11px 0;
+  }
+  .poi summary::-webkit-details-marker{display:none}
+  .poi[open] summary .nm{color:var(--sign-green)}
+  .poi-more{padding:0 0 12px;font-size:.8rem;color:var(--ink-soft)}
+  .poi-more .row{margin:2px 0;line-height:1.45}
   .poi:last-child{border-bottom:none}
   .poi .nm{font-weight:600;font-size:.9rem}
   .poi .kind{font-size:.75rem;color:var(--ink-soft);margin-top:2px;text-transform:capitalize}
@@ -708,7 +717,11 @@ async function getPOIs(kind){
       const name = e.tags?.name;
       if(!name || la==null) return null;
       const kindLabel = (e.tags.amenity || e.tags.tourism || e.tags.leisure || '').replaceAll('_',' ');
-      return { name, kind:kindLabel, lat:la, lon:lo, dist:haversine(lat,lon,la,lo) };
+      return { name, kind:kindLabel, lat:la, lon:lo, dist:haversine(lat,lon,la,lo),
+               website: e.tags.website || e.tags['contact:website'] || '',
+               hours:   e.tags.opening_hours || '',
+               phone:   e.tags.phone || e.tags['contact:phone'] || '',
+               cuisine: (e.tags.cuisine || '').replaceAll(';', ', ').replaceAll('_',' ') };
     })
     .filter(Boolean)
     .sort((a,b)=>a.dist-b.dist);
@@ -717,6 +730,20 @@ async function getPOIs(kind){
   for(const it of items){ if(!seen.has(it.name)){ seen.add(it.name); out.push(it); } if(out.length>=30) break; }
   state.cache[key] = out;
   return out;
+}
+function dealsURL(it){
+  return 'https://www.google.com/search?q=' +
+    encodeURIComponent(`"${it.name}" ${state.place.name} deals OR coupons OR specials OR "happy hour"`);
+}
+function poiDetailHTML(it){
+  const rows = [];
+  if(it.cuisine) rows.push(`<div class="row">Cuisine: ${esc(it.cuisine)}</div>`);
+  if(it.hours)   rows.push(`<div class="row">Hours: ${esc(it.hours)}</div>`);
+  if(it.phone)   rows.push(`<div class="row">${esc(it.phone)}</div>`);
+  const acts = [];
+  if(it.website) acts.push(`<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a>`);
+  acts.push(`<a href="${dealsURL(it)}" target="_blank" rel="noopener">Find deals</a>`);
+  return rows.join('') + `<div class="poi-actions chiprow" style="margin:8px 0 0">${acts.join('')}</div>`;
 }
 function renderPOIs(items, kind){
   poiLayer.clearLayers();
@@ -730,17 +757,25 @@ function renderPOIs(items, kind){
       <button aria-pressed="true">List</button>
       <button aria-pressed="false">Map</button>
     </div>
-    <div class="sec-note">${items.length} places within ~4.5 miles · every one is pinned on the map</div>`;
+    <div class="sec-note">${items.length} places within ~4.5 miles · tap an entry for details · all pinned on the map</div>`;
   for(const it of items){
     html += `
-      <div class="poi">
-        <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}</div></div>
-        <div class="dist">${it.dist.toFixed(1)} mi</div>
-      </div>`;
+      <details class="poi">
+        <summary>
+          <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}</div></div>
+          <div class="dist">${it.dist.toFixed(1)} mi</div>
+        </summary>
+        <div class="poi-more">${poiDetailHTML(it)}</div>
+      </details>`;
     L.circleMarker([it.lat, it.lon], {
       radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9
     }).addTo(poiLayer)
-      .bindPopup(`<strong>${esc(it.name)}</strong><br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi`);
+      .bindPopup(
+        `<strong>${esc(it.name)}</strong><br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
+        (it.hours ? `<br><small>${esc(it.hours)}</small>` : '') +
+        `<br>` +
+        (it.website ? `<a href="${esc(it.website)}" target="_blank" rel="noopener">Website</a> · ` : '') +
+        `<a href="${dealsURL(it)}" target="_blank" rel="noopener">Find deals</a>`);
   }
   contentEl.innerHTML = html;
   const [listBtn, mapBtn] = contentEl.querySelectorAll('.viewtoggle button');
@@ -758,6 +793,7 @@ function socialLinks(){
   return `
     <div class="sec-note">Search this town on other platforms:</div>
     <div class="chiprow">
+      <a href="https://www.reddit.com/search/?q=${q}&sort=new" target="_blank" rel="noopener">Reddit</a>
       <a href="https://x.com/search?q=${q}&f=live" target="_blank" rel="noopener">X / Twitter</a>
       <a href="https://www.instagram.com/explore/search/keyword/?q=${q}" target="_blank" rel="noopener">Instagram</a>
       <a href="https://www.tiktok.com/search?q=${q}" target="_blank" rel="noopener">TikTok</a>
@@ -766,31 +802,57 @@ function socialLinks(){
     </div>`;
 }
 async function getSocial(){
-  if(state.cache.social) return state.cache.social;
+  if(state.cache.social !== undefined) return state.cache.social;
   const cityFull = state.place.name;                 // "Marquette, MI"
-  const search = `https://www.reddit.com/search.json?q=${encodeURIComponent('"'+cityFull+'" OR "'+cityFull.split(',')[0]+'"')}&sort=new&limit=12&t=month`;
-  let txt;
-  try{
-    const r = await fetchT(search, {}, 8000);        // Reddit sometimes allows direct browser reads
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    txt = await r.text();
-  }catch(e){
-    txt = await proxiedText(search);                 // otherwise go through the proxy cascade
+  const q = `"${cityFull}" OR "${cityFull.split(',')[0]}"`;
+  const jsonUrl = `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&sort=new&limit=12&t=month`;
+  const rssUrl  = `https://www.reddit.com/search.rss?q=${encodeURIComponent(q)}&sort=new&t=month`;
+  const asPosts = txt => {
+    if(txt.trim().startsWith('<')) throw new Error('blocked');   // HTML block page, not JSON
+    const d = JSON.parse(txt);
+    const posts = (d?.data?.children || []).map(c=>c.data).filter(p=>p && p.title).map(p=>({
+      title: p.title,
+      sub: p.subreddit_name_prefixed,
+      ups: p.ups,
+      comments: p.num_comments,
+      when: p.created_utc ? new Date(p.created_utc*1000).toLocaleDateString() : '',
+      link: 'https://www.reddit.com'+p.permalink
+    }));
+    if(!posts.length && !d?.data) throw new Error('blocked');
+    return posts;
+  };
+  const routes = [
+    async ()=>{ const r = await fetchT(jsonUrl, {}, 8000);
+                if(!r.ok) throw new Error('HTTP '+r.status);
+                return asPosts(await r.text()); },
+    async ()=> asPosts(await proxiedText(jsonUrl)),
+    async ()=>{ const r = await fetchT('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(rssUrl), {}, 10000);
+                if(!r.ok) throw new Error('HTTP '+r.status);
+                const d = await r.json();
+                if(d.status!=='ok') throw new Error('blocked');
+                return (d.items||[]).map(it=>({
+                  title:it.title, sub:'reddit', ups:null, comments:null,
+                  when: it.pubDate ? new Date(it.pubDate).toLocaleDateString() : '',
+                  link: it.link })); }
+  ];
+  for(const route of routes){
+    try{
+      const posts = await route();
+      state.cache.social = posts;
+      return posts;
+    }catch(e){}
   }
-  const d = JSON.parse(txt);
-  const posts = (d?.data?.children || []).map(c=>c.data).filter(p=>p && p.title).map(p=>({
-    title: p.title,
-    sub: p.subreddit_name_prefixed,
-    ups: p.ups,
-    comments: p.num_comments,
-    when: p.created_utc ? new Date(p.created_utc*1000).toLocaleDateString() : '',
-    link: 'https://www.reddit.com'+p.permalink
-  }));
-  state.cache.social = posts;
-  return posts;
+  state.cache.social = null;                          // null = unreachable, [] = no posts
+  return null;
 }
 function renderSocial(posts){
   let html = socialLinks();
+  if(posts === null){
+    html += `<div class="empty-state"><p>Reddit couldn't be reached from here right now —
+      it blocks some networks and proxies. The platform links above still work,
+      and this tab retries each time you open it.</p></div>`;
+    contentEl.innerHTML = html; state.cache.social = undefined; return;
+  }
   if(!posts.length){
     html += `<div class="empty-state"><p>No recent Reddit posts mention this town.
       Bigger towns usually have their own subreddit — try the platform links above.</p></div>`;
@@ -798,10 +860,14 @@ function renderSocial(posts){
   }
   html += `<div class="sec-note">Recent Reddit posts mentioning ${esc(state.place.name)}:</div>`;
   for(const p of posts){
+    const bits = [esc(p.sub)];
+    if(p.ups != null) bits.push('▲ '+p.ups);
+    if(p.comments != null) bits.push(p.comments+' comments');
+    if(p.when) bits.push(esc(p.when));
     html += `
       <div class="social-item">
         <h3><a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.title)}</a></h3>
-        <div class="meta">${esc(p.sub)} · ▲ ${p.ups} · ${p.comments} comments · ${esc(p.when)}</div>
+        <div class="meta">${bits.join(' · ')}</div>
       </div>`;
   }
   contentEl.innerHTML = html;
