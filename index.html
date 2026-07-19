@@ -1185,6 +1185,16 @@ async function scanDeals(it, box){
   box.innerHTML = out;
 }
 contentEl.addEventListener('click', ev=>{
+  const ap = ev.target.closest('a[data-app]');
+  if(ap){
+    ev.preventDefault();
+    const web = ap.href, app = ap.dataset.app, t0 = Date.now();
+    location.href = app;                                   // try the native app
+    setTimeout(()=>{                                       // still here? app not installed
+      if(document.visibilityState === 'visible' && Date.now() - t0 < 2200) location.href = web;
+    }, 1400);
+    return;
+  }
   const btn = ev.target.closest('.scan-deals');
   if(!btn || !state.currentPOIs) return;
   const it = state.currentPOIs[+btn.dataset.idx];
@@ -1199,12 +1209,12 @@ function socialLinks(){
   return `
     <div class="sec-note">Search this town on other platforms:</div>
     <div class="chiprow">
-      <a href="https://www.reddit.com/search/?q=${q}&sort=new" target="_blank" rel="noopener">Reddit</a>
-      <a href="https://x.com/search?q=${q}&f=live" target="_blank" rel="noopener">X / Twitter</a>
-      <a href="https://www.instagram.com/explore/search/keyword/?q=${q}" target="_blank" rel="noopener">Instagram</a>
-      <a href="https://www.tiktok.com/search?q=${q}" target="_blank" rel="noopener">TikTok</a>
-      <a href="https://www.facebook.com/search/top?q=${q}" target="_blank" rel="noopener">Facebook</a>
-      <a href="https://nextdoor.com/" target="_blank" rel="noopener">Nextdoor</a>
+      <a href="https://www.reddit.com/search/?q=${q}&sort=new" rel="noopener">Reddit</a>
+      <a href="https://x.com/search?q=${q}&f=live" data-app="twitter://search?query=${q}" rel="noopener">X / Twitter</a>
+      <a href="https://www.instagram.com/explore/search/keyword/?q=${q}" rel="noopener">Instagram</a>
+      <a href="https://www.tiktok.com/search?q=${q}" rel="noopener">TikTok</a>
+      <a href="https://www.facebook.com/search/top?q=${q}" rel="noopener">Facebook</a>
+      <a href="https://nextdoor.com/" rel="noopener">Nextdoor</a>
     </div>`;
 }
 async function getSocial(){
