@@ -250,7 +250,8 @@ app.get('/api/radar/tile', async (req, res) => {
     const { p, z, x, y } = req.query;
     if(!/^\/v2\/(radar|nowcast)\/[\w-]+$/.test(String(p))) throw new Error('bad path');
     if(![z, x, y].every(v => /^\d+$/.test(String(v)))) throw new Error('bad coords');
-    const url = `https://tilecache.rainviewer.com${p}/256/${z}/${x}/${y}/2/1_1.png`;
+    // free tier: 512px tiles, Universal Blue (2), max zoom 7
+    const url = `https://tilecache.rainviewer.com${p}/512/${z}/${x}/${y}/2/1_1.png`;
     const buf = await cached('rt:' + url, 5 * 60e3, async () => {
       const rr = await fetch(url);
       if(!rr.ok) throw new Error('tile HTTP ' + rr.status);
