@@ -1562,8 +1562,8 @@ async function getBrief(){
 }
 function renderBrief(text){
   if(text === null){
-    contentEl.innerHTML = `<div class="empty-state"><p>The Brief needs an Anthropic API key on the server —
-      add <b>ANTHROPIC_API_KEY</b> in Render's Environment tab.</p></div>`;
+    contentEl.innerHTML = `<div class="empty-state"><p>The Brief needs a Perplexity API key on the server —
+      add <b>PERPLEXITY_API_KEY</b> in Render's Environment tab.</p></div>`;
     return;
   }
   const html = esc(text)
