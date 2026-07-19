@@ -1,6 +1,6 @@
 # Local Atlas
 
-A single-file web app for exploring any US town: pick a place by ZIP, city, or
+A single-file web app for exploring any US or Canadian town: pick a place by ZIP, city, or
 current location, and get a zoomed-in map with weather, active weather alerts,
 local news, public services, attractions, and places to eat. Zoom out and tap
 any nearby town marker to explore it the same way. Your last place is
@@ -11,10 +11,11 @@ remembered between visits.
 | Feature | Source |
 |---|---|
 | Map tiles | CARTO light basemap / OpenStreetMap |
-| ZIP lookup | zippopotam.us |
+| ZIP / postal code lookup | zippopotam.us (US + CA) |
 | City geocoding | Open-Meteo Geocoding API |
 | Reverse geocoding | BigDataCloud client API |
-| Weather + alerts | National Weather Service (api.weather.gov) |
+| Weather | National Weather Service (US) / Open-Meteo (Canada + fallback) |
+| Alerts | National Weather Service (US) / Environment Canada GeoMet (Canada) |
 | Services / attractions / food | Overpass API (OpenStreetMap) |
 | Local news | Google News RSS (deployed) or Claude web search (inside claude.ai) |
 | Last-place memory | localStorage (deployed) or artifact storage (inside claude.ai) |

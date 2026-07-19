@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Local Atlas — explore any US town</title>
+<title>Local Atlas — explore any US or Canadian town</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -321,7 +321,7 @@
 </head>
 <body>
 
-<div id="map" role="application" aria-label="Map of the United States"></div>
+<div id="map" role="application" aria-label="Map of the United States and Canada"></div>
 <div class="hint-chip" id="hintChip">Tap a town marker to explore it</div>
 <button class="reopen" id="reopenBtn">◂ Local Atlas</button>
 
@@ -329,12 +329,12 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>USA</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span></div>
       <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
     </div>
     <div class="searchrow">
-      <input id="q" type="text" placeholder="ZIP code or city, state" autocomplete="off"
-             aria-label="Search by ZIP code or city">
+      <input id="q" type="text" placeholder="ZIP / postal code or city" autocomplete="off"
+             aria-label="Search by ZIP code, postal code, or city">
       <button class="btn" id="goBtn">Go</button>
     </div>
     <div class="locrow">
@@ -361,7 +361,7 @@
   <div class="content" id="content">
     <div class="empty-state">
       <h2>Pick a place to start</h2>
-      <p>Enter a ZIP code or a city name, or use your current location.
+      <p>Enter a US ZIP, Canadian postal code, or a city name, or use your current location.
          Your last place is remembered for next time.</p>
       <p style="margin-top:10px">Once you're in, zoom out on the map and tap any
          nearby town marker to explore it the same way.</p>
@@ -392,7 +392,7 @@ const state = {
 };
 
 /* ---------------- map ---------------- */
-const map = L.map('map', { zoomControl:false }).setView([39.5, -98.35], 4);
+const map = L.map('map', { zoomControl:false }).setView([45.5, -96.5], 4);
 L.control.zoom({ position:'bottomright' }).addTo(map);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
@@ -456,7 +456,8 @@ function fetchT(url, opts={}, ms=12000){
 }
 
 /* ---------------- geocoding ---------------- */
-const STATE_ABBR = {AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',
+/* US states + Canadian provinces/territories */
+const REGION_ABBR = {AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',
   CT:'Connecticut',DE:'Delaware',FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',
   IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',
   MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',
@@ -464,53 +465,65 @@ const STATE_ABBR = {AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'Cali
   NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',
   RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',
   VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',
-  DC:'District of Columbia'};
-const STATE_NAME_TO_ABBR = Object.fromEntries(
-  Object.entries(STATE_ABBR).map(([a,n])=>[n.toLowerCase(), a]));
+  DC:'District of Columbia',
+  ON:'Ontario',QC:'Quebec',BC:'British Columbia',AB:'Alberta',MB:'Manitoba',SK:'Saskatchewan',
+  NS:'Nova Scotia',NB:'New Brunswick',NL:'Newfoundland and Labrador',PE:'Prince Edward Island',
+  YT:'Yukon',NT:'Northwest Territories',NU:'Nunavut'};
+const REGION_NAME_TO_ABBR = Object.fromEntries(
+  Object.entries(REGION_ABBR).map(([a,n])=>[n.toLowerCase(), a]));
 
 async function geocode(query){
   query = query.trim();
-  if(!query) throw new Error('Type a ZIP code or city name.');
+  if(!query) throw new Error('Type a ZIP / postal code or city name.');
+  // US ZIP
   if(/^\d{5}$/.test(query)){
     const d = await fetchJSON('https://api.zippopotam.us/us/'+query);
     const p = d.places[0];
-    return { lat:+p.latitude, lon:+p.longitude,
+    return { lat:+p.latitude, lon:+p.longitude, country:'US',
              name:`${p['place name']}, ${p['state abbreviation']}` };
   }
-  // "city" or "city, state" via Open-Meteo geocoding (CORS-friendly, keyless)
+  // Canadian postal code — lookup uses the first three characters (the FSA)
+  if(/^[A-Za-z]\d[A-Za-z]/.test(query.replace(/\s/g,''))){
+    const fsa = query.replace(/\s/g,'').slice(0,3).toUpperCase();
+    const d = await fetchJSON('https://api.zippopotam.us/ca/'+fsa);
+    const p = d.places[0];
+    return { lat:+p.latitude, lon:+p.longitude, country:'CA',
+             name:`${p['place name']}, ${p['state abbreviation']}` };
+  }
+  // "city" or "city, region" via Open-Meteo geocoding (CORS-friendly, keyless)
   const parts = query.split(',').map(s=>s.trim()).filter(Boolean);
   const cityQ = parts[0];
-  let wantState = null;
+  let wantRegion = null;
   if(parts[1]){
     const s = parts[1];
-    wantState = STATE_ABBR[s.toUpperCase()] || (STATE_NAME_TO_ABBR[s.toLowerCase()] ? s : null);
-    if(wantState === null && s.length) wantState = s; // pass through as-is, best effort
+    wantRegion = REGION_ABBR[s.toUpperCase()] || (REGION_NAME_TO_ABBR[s.toLowerCase()] ? s : s);
   }
   const url = 'https://geocoding-api.open-meteo.com/v1/search?count=10&language=en&format=json&name='
             + encodeURIComponent(cityQ);
   const d = await fetchJSON(url);
-  let hits = (d.results||[]).filter(r=>r.country_code==='US');
-  if(wantState){
-    const wsLower = String(wantState).toLowerCase();
+  let hits = (d.results||[]).filter(r=>r.country_code==='US' || r.country_code==='CA');
+  if(wantRegion){
+    const wsLower = String(wantRegion).toLowerCase();
     const filtered = hits.filter(r=>(r.admin1||'').toLowerCase() === wsLower);
     if(filtered.length) hits = filtered;
   }
-  if(!hits.length) throw new Error('No US match for “'+query+'”. Try “city, state”.');
+  if(!hits.length) throw new Error('No US or Canadian match for “'+query+'”. Try “city, state/province”.');
   const hit = hits[0];
-  const abbr = STATE_NAME_TO_ABBR[(hit.admin1||'').toLowerCase()] || hit.admin1 || '';
-  return { lat:hit.latitude, lon:hit.longitude,
+  const abbr = REGION_NAME_TO_ABBR[(hit.admin1||'').toLowerCase()] || hit.admin1 || '';
+  return { lat:hit.latitude, lon:hit.longitude, country:hit.country_code,
            name: abbr ? `${hit.name}, ${abbr}` : hit.name };
 }
 
-async function reverseName(lat, lon){
+async function reversePlace(lat, lon){
   try{
     const d = await fetchJSON(
       `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
     const town = d.city || d.locality || 'Unknown place';
-    const st = d.principalSubdivisionCode ? d.principalSubdivisionCode.replace(/^US-/,'')
+    const st = d.principalSubdivisionCode ? d.principalSubdivisionCode.replace(/^(US|CA)-/,'')
              : d.principalSubdivision || '';
-    return st ? `${town}, ${st}` : town;
-  }catch(e){ return `${lat.toFixed(3)}, ${lon.toFixed(3)}`; }
+    return { name: st ? `${town}, ${st}` : town,
+             country: d.countryCode === 'CA' ? 'CA' : 'US' };
+  }catch(e){ return { name:`${lat.toFixed(3)}, ${lon.toFixed(3)}`, country:'US' }; }
 }
 
 /* ---------------- load a place ---------------- */
@@ -596,14 +609,54 @@ async function renderTab(name){
   }
 }
 
-/* ---------------- weather (NWS) ---------------- */
+/* ---------------- weather ----------------
+   US: National Weather Service (rich text). Canada: NWS doesn't cover it,
+   so Open-Meteo provides the forecast (also the US fallback if NWS is down). */
+const WMO = {0:'Clear',1:'Mostly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Icy fog',
+  51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',56:'Freezing drizzle',57:'Freezing drizzle',
+  61:'Light rain',63:'Rain',65:'Heavy rain',66:'Freezing rain',67:'Freezing rain',
+  71:'Light snow',73:'Snow',75:'Heavy snow',77:'Snow grains',80:'Rain showers',81:'Rain showers',
+  82:'Violent rain showers',85:'Snow showers',86:'Heavy snow showers',95:'Thunderstorm',
+  96:'Thunderstorm with hail',99:'Thunderstorm with heavy hail'};
 async function getWeather(){
   if(state.cache.weather) return state.cache.weather;
-  const { lat, lon } = state.place;
-  const pt = await fetchJSON(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
-  const fc = await fetchJSON(pt.properties.forecast);
-  state.cache.weather = fc.properties.periods.slice(0, 6);
-  return state.cache.weather;
+  const { lat, lon, country } = state.place;
+  if(country !== 'CA'){
+    try{
+      const pt = await fetchJSON(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
+      const fc = await fetchJSON(pt.properties.forecast);
+      state.cache.weather = fc.properties.periods.slice(0, 6);
+      return state.cache.weather;
+    }catch(e){ /* fall through to Open-Meteo */ }
+  }
+  const unit = country === 'CA' ? 'celsius' : 'fahrenheit';
+  const u = country === 'CA' ? 'C' : 'F';
+  const d = await fetchJSON(
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&current=temperature_2m,weather_code,wind_speed_10m` +
+    `&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max` +
+    `&temperature_unit=${unit}&timezone=auto&forecast_days=6`);
+  const periods = [{
+    name:'Now',
+    temperature: Math.round(d.current.temperature_2m),
+    temperatureUnit: u,
+    shortForecast: WMO[d.current.weather_code] || 'Current conditions',
+    detailedForecast: `Wind ${Math.round(d.current.wind_speed_10m)} ${d.current_units?.wind_speed_10m || 'km/h'}.`
+  }];
+  const days = d.daily;
+  for(let i=0;i<days.time.length && periods.length<6;i++){
+    const day = new Date(days.time[i]+'T12:00:00');
+    periods.push({
+      name: i===0 ? 'Today' : day.toLocaleDateString(undefined,{weekday:'long'}),
+      temperature: Math.round(days.temperature_2m_max[i]),
+      temperatureUnit: u,
+      shortForecast: WMO[days.weather_code[i]] || '',
+      detailedForecast: `High ${Math.round(days.temperature_2m_max[i])}°, low ${Math.round(days.temperature_2m_min[i])}°` +
+        (days.precipitation_probability_max[i]!=null ? `, ${days.precipitation_probability_max[i]}% chance of precipitation.` : '.')
+    });
+  }
+  state.cache.weather = periods;
+  return periods;
 }
 function renderWeather(periods){
   if(!periods || !periods.length){ showError('No forecast available for this point.'); return; }
@@ -626,14 +679,30 @@ function renderWeather(periods){
         </div>
       </div>`;
   }
-  html += `<div class="sec-note">Forecast: National Weather Service</div>`;
+  html += `<div class="sec-note">Forecast: ${state.place.country==='CA' ? 'Open-Meteo' : 'National Weather Service'}</div>`;
   contentEl.innerHTML = html;
 }
 
-/* ---------------- alerts (NWS) ---------------- */
+/* ---------------- alerts (NWS / Environment Canada) ---------------- */
 async function getAlerts(){
   if(state.cache.alerts) return state.cache.alerts;
-  const { lat, lon } = state.place;
+  const { lat, lon, country } = state.place;
+  if(country === 'CA'){
+    const box = 0.15;
+    const d = await fetchJSON(
+      `https://api.weather.gc.ca/collections/alerts/items?f=json&lang=en` +
+      `&bbox=${(lon-box).toFixed(3)},${(lat-box).toFixed(3)},${(lon+box).toFixed(3)},${(lat+box).toFixed(3)}`);
+    state.cache.alerts = (d.features||[]).map(f=>{
+      const p = f.properties || {};
+      return {
+        event: p.headline || p.event || p.alert_type || 'Weather alert',
+        severity: p.severity || p.urgency || '',
+        ends: p.expires || p.ends || null,
+        headline: p.description || p.descrip_en || p.headline || ''
+      };
+    });
+    return state.cache.alerts;
+  }
   const d = await fetchJSON(`https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`);
   state.cache.alerts = (d.features||[]).map(f=>f.properties);
   return state.cache.alerts;
@@ -642,7 +711,7 @@ function renderAlerts(alerts){
   if(!alerts.length){
     contentEl.innerHTML = `
       <div class="all-clear"><div class="dot"></div>No active weather alerts here.</div>
-      <div class="sec-note">Checked against National Weather Service active alerts.</div>`;
+      <div class="sec-note">Checked against ${state.place.country==='CA' ? 'Environment Canada' : 'National Weather Service'} active alerts.</div>`;
     return;
   }
   let html = '';
@@ -657,7 +726,7 @@ function renderAlerts(alerts){
         <p>${esc(a.headline || a.description?.slice(0,280) || '')}</p>
       </div>`;
   }
-  html += `<div class="sec-note">Source: National Weather Service</div>`;
+  html += `<div class="sec-note">Source: ${state.place.country==='CA' ? 'Environment Canada' : 'National Weather Service'}</div>`;
   contentEl.innerHTML = html;
 }
 
@@ -901,7 +970,8 @@ async function proxiedText(url){
 
 async function getNewsRSS(){
   const city = state.place.name;
-  const feed = `https://news.google.com/rss/search?q=${encodeURIComponent('"'+city.split(',')[0]+'" local news')}&hl=en-US&gl=US&ceid=US:en`;
+  const cc = state.place.country==='CA' ? 'CA' : 'US';
+  const feed = `https://news.google.com/rss/search?q=${encodeURIComponent('"'+city.split(',')[0]+'" local news')}&hl=en-${cc}&gl=${cc}&ceid=${cc}:en`;
   const parseXML = txt => {
     const xml = new DOMParser().parseFromString(txt, 'text/xml');
     const list = [...xml.querySelectorAll('item')];
@@ -1010,8 +1080,9 @@ async function loadTowns(){
       const mk = L.marker([e.lat, e.lon], { icon:townIcon })
         .bindTooltip(e.tags.name, { className:'town-label', direction:'top', offset:[0,-8] });
       mk.on('click', async ()=>{
-        const name = await reverseName(e.lat, e.lon);
-        loadPlace({ lat:e.lat, lon:e.lon, name: name.includes(',') ? name : e.tags.name });
+        const rp = await reversePlace(e.lat, e.lon);
+        loadPlace({ lat:e.lat, lon:e.lon, country:rp.country,
+                    name: rp.name.includes(',') ? rp.name : e.tags.name });
       });
       mk.addTo(townLayer);
     }
@@ -1067,8 +1138,8 @@ $('geoBtn').addEventListener('click', async ()=>{
   });
   try{
     const loc = precise || await locateByIP();
-    const name = await reverseName(loc.lat, loc.lon);
-    loadPlace({ lat:loc.lat, lon:loc.lon, name });
+    const rp = await reversePlace(loc.lat, loc.lon);
+    loadPlace({ lat:loc.lat, lon:loc.lon, name:rp.name, country:rp.country });
     if(!precise) msg('Using approximate location from your network — search a ZIP for an exact spot.');
   }catch(e){
     msg('Couldn’t determine your location — search by ZIP or city instead.', true);
@@ -1094,6 +1165,7 @@ $('sheetToggle').addEventListener('click', ()=> $('panel').classList.toggle('col
 (async ()=>{
   const last = await loadLast();
   if(last && typeof last.lat==='number'){
+    if(!last.country) last.country = 'US';
     loadPlace(last, { fly:false });
     map.setView([last.lat, last.lon], 12);
   }
