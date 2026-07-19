@@ -258,6 +258,10 @@
   .place-badge .coords{
     font-family:'IBM Plex Mono',monospace;font-size:.68rem;color:var(--ink-soft);margin-top:3px;
   }
+  .place-badge .townstats{
+    font-family:'IBM Plex Mono',monospace;font-size:.68rem;color:var(--sign-green);margin-top:3px;
+    line-height:1.5;
+  }
 
   /* tabs */
   .tabs{
@@ -474,7 +478,7 @@
   <div class="place-badge" id="placeBadge">
     <div class="name" id="placeName"></div>
     <div class="coords" id="placeCoords"></div>
-    <div class="coords" id="townStats"></div>
+    <div class="townstats" id="townStats"></div>
   </div>
 
   <div class="tabs" role="tablist" id="tabs" style="display:none">
@@ -1501,7 +1505,10 @@ async function getEvents(){
   if(!be.tm){ state.cache.events = null; return null; }     // key not configured
   const miles = Math.max(10, Math.round(state.radiusM/1609));
   const r = await fetchT(`/api/events?lat=${state.place.lat}&lon=${state.place.lon}&radius=${miles}`, {}, 12000);
-  if(!r.ok) throw new Error('events HTTP '+r.status);
+  if(!r.ok){
+    const j = await r.json().catch(()=>({}));
+    throw new Error(j.error || ('events HTTP '+r.status));
+  }
   state.cache.events = (await r.json()).events || [];
   return state.cache.events;
 }
