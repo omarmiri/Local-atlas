@@ -166,6 +166,31 @@
     background:var(--sign-green);color:#fff;border-radius:99px;
     font-family:'IBM Plex Mono',monospace;font-size:.68rem;padding:3px 10px;
   }
+  .states-panel{
+    position:fixed;z-index:1001;top:16px;right:16px;bottom:16px;
+    width:min(400px,calc(100vw - 32px));
+    display:none;flex-direction:column;
+    background:var(--paper);border-radius:var(--radius);
+    box-shadow:var(--shadow);border:1px solid var(--line);overflow:hidden;
+  }
+  .states-panel.open{display:flex}
+  .states-head{
+    background:var(--sun);color:var(--ink);
+    padding:12px 16px;display:flex;justify-content:space-between;align-items:center;
+  }
+  .states-head h2{
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:1rem;
+    letter-spacing:.04em;text-transform:uppercase;
+  }
+  .states-close{color:rgba(0,0,0,.55);font-size:1rem}
+  .states-close:hover{background:rgba(0,0,0,.08);color:var(--ink)}
+  .states-content{
+    flex:1;overflow-y:auto;background:#fff;
+    border-top:2px solid var(--sign-green);padding:14px 16px 20px;
+  }
+  @media (max-width:640px){
+    .states-panel{top:auto;left:0;right:0;bottom:0;width:100%;height:70vh;border-radius:18px 18px 0 0}
+  }
   .state-row{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
   .state-row:last-child{border-bottom:none}
   .state-row .rank{
@@ -189,21 +214,6 @@
     white-space:nowrap;max-width:calc(100vw - 32px);overflow:hidden;text-overflow:ellipsis;
   }
   @media (max-width:640px){
-    .state-row{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
-  .state-row:last-child{border-bottom:none}
-  .state-row .rank{
-    flex:0 0 32px;font-family:'Overpass',sans-serif;font-weight:800;font-size:1rem;
-    color:var(--sign-green);padding-top:1px;
-  }
-  .state-row .metric{
-    font-family:'IBM Plex Mono',monospace;font-size:.68rem;color:var(--sky);font-weight:500;margin-left:4px;
-  }
-  .rank-pin{
-    background:var(--sun);border:2.5px solid var(--sign-green);border-radius:50%;
-    font-family:'Overpass',sans-serif;font-weight:800;font-size:.72rem;color:var(--ink);
-    display:flex;align-items:center;justify-content:center;
-    box-shadow:0 2px 6px rgba(0,0,0,.35);
-  }
   .alert-banner{top:12px;font-size:.72rem}
     .layerbox{top:56px}
     .layer-menu{padding:6px;gap:4px}
@@ -581,6 +591,14 @@
          nearby town marker to explore it the same way.</p>
     </div>
   </div>
+</aside>
+
+<aside class="states-panel" id="statesPanel" aria-label="Top US States leaderboards">
+  <div class="states-head">
+    <h2>🏆 Top US States</h2>
+    <button class="hide-btn states-close" id="statesClose" aria-label="Close leaderboards">✕</button>
+  </div>
+  <div class="states-content" id="statesContent"></div>
 </aside>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -2208,36 +2226,33 @@ const STATES_CATS = [
   ['visit', '🌤 Visit this month']
 ];
 $('statesBtn').addEventListener('click', ()=>{ statesMode ? exitStates() : enterStates(); });
+let mainHiddenForStates = false;
 function enterStates(){
   statesMode = true;
   $('statesBtn').style.color = 'var(--sun)';
-  $('placeBadge').style.display = 'none';
-  $('tabs').style.display = 'none';
-  $('panel').classList.remove('collapsed');
-  document.body.classList.remove('panel-mini');
-  showPanel();
+  $('statesPanel').classList.add('open');
+  if(window.matchMedia('(max-width:640px)').matches){
+    hidePanel();
+    $('reopenBtn').classList.remove('show');   // the states panel occupies that space
+    mainHiddenForStates = true;
+  }
   map.flyTo([39.8, -98.6], 4, { duration: 1 });
   loadStatesCat(statesCat);
 }
 function exitStates(){
   statesMode = false;
   $('statesBtn').style.color = '';
+  $('statesPanel').classList.remove('open');
   statesLayer.clearLayers();
-  if(state.place){
-    $('placeBadge').style.display = 'block';
-    $('tabs').style.display = 'flex';
-    renderTab(state.tab);
-    map.flyTo([state.place.lat, state.place.lon], 12, { duration: 1 });
-  }else{
-    contentEl.innerHTML = `<div class="empty-state"><h2>Pick a place to start</h2>
-      <p>Enter a ZIP, postal code, or city — or tap 🏆 for the state leaderboards.</p></div>`;
-  }
+  if(mainHiddenForStates){ showPanel(); mainHiddenForStates = false; }
+  if(state.place) map.flyTo([state.place.lat, state.place.lon], 12, { duration: 1 });
 }
+$('statesClose').addEventListener('click', exitStates);
 async function loadStatesCat(cat){
   statesCat = cat;
   const chips = STATES_CATS.map(([k, label]) =>
     `<button data-cat="${k}" aria-pressed="${k === cat}">${label}</button>`).join('');
-  contentEl.innerHTML =
+  $('statesContent').innerHTML =
     `<div class="filterrow states-chips">${chips}</div>
      <div class="loading"><div class="spinner"></div>${cat === 'weird'
        ? 'Judging every state\u2019s \u201c&lt;State&gt; man\u201d headlines\u2026 first run of the day takes up to a minute'
@@ -2253,13 +2268,13 @@ async function loadStatesCat(cat){
     renderStates(cat, (await r.json()).items || []);
   }catch(e){
     if(!statesMode || statesCat !== cat) return;
-    contentEl.innerHTML = `<div class="filterrow states-chips">${chips}</div>
+    $('statesContent').innerHTML = `<div class="filterrow states-chips">${chips}</div>
       <div class="err-note">Couldn\u2019t build this leaderboard (${esc(e.message)}). Try again in a moment.</div>`;
     wireStateChips();
   }
 }
 function wireStateChips(){
-  contentEl.querySelectorAll('.states-chips button').forEach(b =>
+  $('statesContent').querySelectorAll('.states-chips button').forEach(b =>
     b.addEventListener('click', ()=> loadStatesCat(b.dataset.cat)));
 }
 function renderStates(cat, items){
@@ -2268,7 +2283,7 @@ function renderStates(cat, items){
     `<button data-cat="${k}" aria-pressed="${k === cat}">${label}</button>`).join('');
   let html = `<div class="filterrow states-chips">${chips}</div>`;
   if(!items.length){
-    contentEl.innerHTML = html + `<div class="empty-state"><p>Nothing to rank right now.</p></div>`;
+    $('statesContent').innerHTML = html + `<div class="empty-state"><p>Nothing to rank right now.</p></div>`;
     wireStateChips(); return;
   }
   const note = {
@@ -2312,7 +2327,7 @@ function renderStates(cat, items){
       mk.addTo(statesLayer);
     }
   });
-  contentEl.innerHTML = html;
+  $('statesContent').innerHTML = html;
   wireStateChips();
 }
 
