@@ -218,14 +218,18 @@ async function geminiJSON(prompt, maxTokens){
   const m = txt.match(/\[[\s\S]*\]/);
   return JSON.parse(m ? m[0] : txt.replace(/```json|```/g, '').trim());
 }
-function rssTitles(xml, limit){
+function rssItems(xml, limit){
   const out = [];
-  const rx = /<item>[\s\S]*?<title>([\s\S]*?)<\/title>/g;
+  const rx = /<item>([\s\S]*?)<\/item>/g;
   let m;
   while((m = rx.exec(xml)) && out.length < limit){
-    let t = m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim();
+    const block = m[1];
+    const tm = block.match(/<title>([\s\S]*?)<\/title>/);
+    const lm = block.match(/<link>([\s\S]*?)<\/link>/);
+    if(!tm) continue;
+    let t = tm[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim();
     if(t.includes(' - ')) t = t.split(' - ').slice(0, -1).join(' - ');
-    out.push(t);
+    out.push({ title: t, link: lm ? lm[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim() : '' });
   }
   return out;
 }
@@ -241,20 +245,20 @@ async function mapLimit(items, limit, fn){
 /* Weirdest state: "<State> man" headlines, AI-judged for absurdity */
 app.get('/api/states/weird', async (req, res) => {
   try{
-    const data = await cached('st:weird', 24 * 3600e3, async () => {
+    const data = await cached('st:weird:v2', 24 * 3600e3, async () => {
       const perState = await mapLimit(STATES, 6, async ([name, abbr, lat, lon]) => {
         try{
           const feed = 'https://news.google.com/rss/search?q=' +
             encodeURIComponent(`"${name} man"`) + '&hl=en-US&gl=US&ceid=US:en';
           const rr = await fetch(feed);
-          if(!rr.ok) return { name, abbr, lat, lon, titles: [] };
-          return { name, abbr, lat, lon, titles: rssTitles(await rr.text(), 8) };
-        }catch(e){ return { name, abbr, lat, lon, titles: [] }; }
+          if(!rr.ok) return { name, abbr, lat, lon, items: [] };
+          return { name, abbr, lat, lon, items: rssItems(await rr.text(), 8) };
+        }catch(e){ return { name, abbr, lat, lon, items: [] }; }
       });
       let ranked;
       try{
-        const compact = Object.fromEntries(perState.filter(st => st.titles.length)
-          .map(st => [st.name, st.titles]));
+        const compact = Object.fromEntries(perState.filter(st => st.items.length)
+          .map(st => [st.name, st.items.map(i => i.title)]));
         ranked = await geminiJSON(
 `Below are recent news headlines that begin with or feature "<State> man". Score each state 0-10 for how absurd, silly, shocking, or dumb its "<State> man" stories are — the "Florida Man" phenomenon. Respond ONLY with a JSON array of the 12 weirdest states, best first:
 [{"state":"...","score":9.4,"headlines":["up to 3 of the funniest verbatim headlines for that state, funniest first"]}]
@@ -262,12 +266,23 @@ app.get('/api/states/weird', async (req, res) => {
 HEADLINES:
 ${JSON.stringify(compact).slice(0, 14000)}`, 1200);
       }catch(e){
-        ranked = perState.map(st => ({ state: st.name, score: st.titles.length, headlines: st.titles.slice(0, 3) }))
+        ranked = perState.map(st => ({ state: st.name, score: st.items.length,
+            headlines: st.items.slice(0, 3).map(i => i.title) }))
           .sort((a, b) => b.score - a.score).slice(0, 12);
       }
+      const norm = t => String(t).toLowerCase().replace(/[^a-z0-9]/g, '');
       return ranked.map(r => {
         const st = STATES.find(x => x[0] === r.state);
-        return { ...r, abbr: st?.[1] || '', lat: st?.[2], lon: st?.[3] };
+        const src = perState.find(x => x.name === r.state);
+        const headlines = (r.headlines || []).map(h => {
+          const nh = norm(h);
+          const hit = (src?.items || []).find(i => {
+            const ni = norm(i.title);
+            return ni === nh || ni.includes(nh.slice(0, 40)) || nh.includes(ni.slice(0, 40));
+          });
+          return { title: h, url: hit?.link || '' };
+        });
+        return { ...r, headlines, abbr: st?.[1] || '', lat: st?.[2], lon: st?.[3] };
       });
     });
     res.json({ items: data });
@@ -329,14 +344,15 @@ app.get('/api/states/visit', async (req, res) => {
   try{
     if(!AI) return res.status(503).json({ error: 'not configured' });
     const monthKey = new Date().toISOString().slice(0, 7);
-    const data = await cached('st:visit:' + monthKey, 24 * 3600e3, async () => {
+    const data = await cached('st:visit:v2:' + monthKey, 24 * 3600e3, async () => {
       const month = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
       const ranked = await geminiJSON(
 `It is ${month}. Rank the 10 best US states to visit this month, considering typical weather, seasonal scenery, festivals, and outdoor conditions. Respond ONLY with a JSON array, best first:
-[{"state":"...","why":"one concrete sentence on why this month specifically"}]`, 900);
+[{"state":"...","why":"one concrete sentence on why this month specifically","site":"the official state tourism board homepage URL, e.g. https://www.visitcalifornia.com"}]`, 1100);
       return ranked.map(r => {
         const st = STATES.find(x => x[0] === r.state);
-        return { ...r, abbr: st?.[1] || '', lat: st?.[2], lon: st?.[3] };
+        const site = typeof r.site === 'string' && /^https?:\/\//.test(r.site) ? r.site : '';
+        return { ...r, site, abbr: st?.[1] || '', lat: st?.[2], lon: st?.[3] };
       });
     });
     res.json({ items: data });

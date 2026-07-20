@@ -552,7 +552,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.4</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.5</span></div>
       <div>
         <button class="hide-btn" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -2304,14 +2304,26 @@ function renderStates(cat, items){
     if(cat === 'weird'){
       metric = 'weirdness ' + (typeof it.score === 'number' ? it.score.toFixed(1) : it.score);
       const heads = Array.isArray(it.headlines) ? it.headlines : (it.headline ? [it.headline] : []);
-      sub = heads.slice(0, 3).map(h => `<div class="deal-snip">\u201c${esc(h)}\u201d</div>`).join('');
+      sub = heads.slice(0, 3).map(h => {
+        const o = typeof h === 'string' ? { title: h, url: '' } : h;
+        const quote = `\u201c${esc(o.title)}\u201d`;
+        return `<div class="deal-snip">${o.url
+          ? `<a href="${esc(o.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${quote}</a>`
+          : quote}</div>`;
+      }).join('');
     }else if(cat === 'events'){
       metric = (it.count || 0).toLocaleString() + ' ticketed' + (it.nps ? ` \u00b7 ${it.nps} park events` : '');
       sub = (it.festival ? `<div class="kind" style="margin-top:3px">\ud83c\udfaa ${esc(it.festival)}</div>` : '')
           + (it.top ? `<div class="kind" style="margin-top:3px">Biggest draw: ${esc(it.top)}</div>` : '')
           + (it.note ? `<div class="kind" style="margin-top:3px">${esc(it.note)}</div>` : '');
     }else{
-      sub = it.why ? `<div class="kind" style="margin-top:3px">${esc(it.why)}</div>` : '';
+      const slug = stateName.toLowerCase().replace(/\s+/g, '-');
+      const links = [];
+      if(it.site) links.push(`<a href="${esc(it.site)}" target="_blank" rel="noopener">Tourism board</a>`);
+      links.push(`<a href="https://www.lonelyplanet.com/usa/${slug}" target="_blank" rel="noopener">Lonely Planet</a>`);
+      links.push(`<a href="https://en.wikivoyage.org/wiki/${encodeURIComponent(stateName)}" target="_blank" rel="noopener">Wikivoyage</a>`);
+      sub = (it.why ? `<div class="kind" style="margin-top:3px">${esc(it.why)}</div>` : '')
+          + `<div class="chiprow" style="margin-top:6px">${links.join('')}</div>`;
     }
     html += `
       <div class="state-row">
