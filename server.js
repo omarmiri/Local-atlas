@@ -170,6 +170,143 @@ app.get('/api/fetch', async (req, res) => {
   }catch(e){ res.status(502).send('fetch failed: ' + String(e.message || e)); }
 });
 
+/* ---- Top US States leaderboards ---- */
+const STATES = [
+ ['Alabama','AL',32.8,-86.8],['Alaska','AK',64.0,-152.0],['Arizona','AZ',34.2,-111.6],
+ ['Arkansas','AR',34.8,-92.4],['California','CA',37.2,-119.3],['Colorado','CO',39.0,-105.5],
+ ['Connecticut','CT',41.6,-72.7],['Delaware','DE',39.0,-75.5],['Florida','FL',28.6,-82.4],
+ ['Georgia','GA',32.6,-83.4],['Hawaii','HI',20.8,-156.3],['Idaho','ID',44.4,-114.6],
+ ['Illinois','IL',40.0,-89.2],['Indiana','IN',39.9,-86.3],['Iowa','IA',42.0,-93.5],
+ ['Kansas','KS',38.5,-98.4],['Kentucky','KY',37.5,-85.3],['Louisiana','LA',31.0,-92.0],
+ ['Maine','ME',45.4,-69.2],['Maryland','MD',39.0,-76.8],['Massachusetts','MA',42.3,-71.8],
+ ['Michigan','MI',44.3,-85.4],['Minnesota','MN',46.3,-94.3],['Mississippi','MS',32.7,-89.7],
+ ['Missouri','MO',38.4,-92.5],['Montana','MT',47.0,-109.6],['Nebraska','NE',41.5,-99.8],
+ ['Nevada','NV',39.3,-116.6],['New Hampshire','NH',43.7,-71.6],['New Jersey','NJ',40.2,-74.7],
+ ['New Mexico','NM',34.4,-106.1],['New York','NY',42.9,-75.5],['North Carolina','NC',35.5,-79.4],
+ ['North Dakota','ND',47.4,-100.5],['Ohio','OH',40.3,-82.8],['Oklahoma','OK',35.6,-97.5],
+ ['Oregon','OR',43.9,-120.6],['Pennsylvania','PA',40.9,-77.8],['Rhode Island','RI',41.7,-71.6],
+ ['South Carolina','SC',33.9,-80.9],['South Dakota','SD',44.4,-100.2],['Tennessee','TN',35.9,-86.4],
+ ['Texas','TX',31.5,-99.4],['Utah','UT',39.3,-111.7],['Vermont','VT',44.1,-72.7],
+ ['Virginia','VA',37.5,-78.9],['Washington','WA',47.4,-120.4],['West Virginia','WV',38.6,-80.6],
+ ['Wisconsin','WI',44.6,-89.7],['Wyoming','WY',43.0,-107.6]
+];
+async function geminiJSON(prompt, maxTokens){
+  if(!AI) throw new Error('no AI key');
+  const rr = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent?key=${AI}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: maxTokens }
+    })
+  });
+  if(!rr.ok) throw new Error('Gemini HTTP ' + rr.status);
+  const j = await rr.json();
+  const txt = (j.candidates?.[0]?.content?.parts || []).map(pt => pt.text || '').join('');
+  const m = txt.match(/\[[\s\S]*\]/);
+  return JSON.parse(m ? m[0] : txt.replace(/```json|```/g, '').trim());
+}
+function rssTitles(xml, limit){
+  const out = [];
+  const rx = /<item>[\s\S]*?<title>([\s\S]*?)<\/title>/g;
+  let m;
+  while((m = rx.exec(xml)) && out.length < limit){
+    let t = m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim();
+    if(t.includes(' - ')) t = t.split(' - ').slice(0, -1).join(' - ');
+    out.push(t);
+  }
+  return out;
+}
+async function mapLimit(items, limit, fn){
+  const out = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: limit }, async () => {
+    while(i < items.length){ const idx = i++; out[idx] = await fn(items[idx], idx); }
+  }));
+  return out;
+}
+
+/* Weirdest state: "<State> man" headlines, AI-judged for absurdity */
+app.get('/api/states/weird', async (req, res) => {
+  try{
+    const data = await cached('st:weird', 24 * 3600e3, async () => {
+      const perState = await mapLimit(STATES, 6, async ([name, abbr, lat, lon]) => {
+        try{
+          const feed = 'https://news.google.com/rss/search?q=' +
+            encodeURIComponent(`"${name} man"`) + '&hl=en-US&gl=US&ceid=US:en';
+          const rr = await fetch(feed);
+          if(!rr.ok) return { name, abbr, lat, lon, titles: [] };
+          return { name, abbr, lat, lon, titles: rssTitles(await rr.text(), 5) };
+        }catch(e){ return { name, abbr, lat, lon, titles: [] }; }
+      });
+      let ranked;
+      try{
+        const compact = Object.fromEntries(perState.filter(st => st.titles.length)
+          .map(st => [st.name, st.titles]));
+        ranked = await geminiJSON(
+`Below are recent news headlines that begin with or feature "<State> man". Score each state 0-10 for how absurd, silly, shocking, or dumb its "<State> man" stories are — the "Florida Man" phenomenon. Respond ONLY with a JSON array of the 12 weirdest states, best first:
+[{"state":"...","score":9.4,"headline":"the single funniest verbatim headline for that state"}]
+
+HEADLINES:
+${JSON.stringify(compact).slice(0, 14000)}`, 1200);
+      }catch(e){
+        ranked = perState.map(st => ({ state: st.name, score: st.titles.length * 2, headline: st.titles[0] || '' }))
+          .sort((a, b) => b.score - a.score).slice(0, 12);
+      }
+      return ranked.map(r => {
+        const st = STATES.find(x => x[0] === r.state);
+        return { ...r, abbr: st?.[1] || '', lat: st?.[2], lon: st?.[3] };
+      });
+    });
+    res.json({ items: data });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* Most happening: Ticketmaster event volume per state, next 30 days */
+app.get('/api/states/events', async (req, res) => {
+  try{
+    if(!TM) return res.status(503).json({ error: 'events not configured' });
+    const data = await cached('st:events', 12 * 3600e3, async () => {
+      const start = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+      const end = new Date(Date.now() + 30 * 864e5).toISOString().replace(/\.\d+Z$/, 'Z');
+      const rows = await mapLimit(STATES, 3, async ([name, abbr, lat, lon]) => {
+        try{
+          const url = 'https://app.ticketmaster.com/discovery/v2/events.json' +
+            `?apikey=${TM}&stateCode=${abbr}&size=1&startDateTime=${start}&endDateTime=${end}`;
+          const rr = await fetch(url);
+          if(!rr.ok) return { state: name, abbr, lat, lon, count: 0, top: '' };
+          const j = await rr.json();
+          await new Promise(r => setTimeout(r, 120));       // stay under TM rate limits
+          return { state: name, abbr, lat, lon,
+            count: j.page?.totalElements || 0,
+            top: j._embedded?.events?.[0]?.name || '' };
+        }catch(e){ return { state: name, abbr, lat, lon, count: 0, top: '' }; }
+      });
+      return rows.sort((a, b) => b.count - a.count).slice(0, 12);
+    });
+    res.json({ items: data });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* Best to visit this month: AI seasonal picks */
+app.get('/api/states/visit', async (req, res) => {
+  try{
+    if(!AI) return res.status(503).json({ error: 'not configured' });
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const data = await cached('st:visit:' + monthKey, 24 * 3600e3, async () => {
+      const month = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      const ranked = await geminiJSON(
+`It is ${month}. Rank the 10 best US states to visit this month, considering typical weather, seasonal scenery, festivals, and outdoor conditions. Respond ONLY with a JSON array, best first:
+[{"state":"...","why":"one concrete sentence on why this month specifically"}]`, 900);
+      return ranked.map(r => {
+        const st = STATES.find(x => x[0] === r.state);
+        return { ...r, abbr: st?.[1] || '', lat: st?.[2], lon: st?.[3] };
+      });
+    });
+    res.json({ items: data });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
 /* ---- Ticketmaster events ---- */
 app.get('/api/events', async (req, res) => {
   try{
