@@ -69,40 +69,51 @@ async function cached(key, ttlMs, fn){
 app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS }));
 
 /* ---- Foursquare places ---- */
+/* Legacy v3 was shut down May 15 2026 — this is the new Places API.
+   Requires a Service API Key (not a legacy fsq3 key). */
+const FSQ_BASE = 'https://places-api.foursquare.com';
+const FSQ_HDRS = () => ({ Authorization: 'Bearer ' + FSQ,
+  'X-Places-Api-Version': '2025-06-17', Accept: 'application/json' });
 const FSQ_CATS = {
-  services: '12000,15000',      // community/government, health
-  attractions: '16000,10000',   // landmarks/outdoors, arts & entertainment
-  food: '13000',                // dining & drinking
-  shopping: '17000',            // retail
-  kids: '10000'                 // arts & entertainment (OSM covers playgrounds etc.)
+  services:    '4d4b7105d754a06375d81259',                          // professional & other
+  attractions: '4d4b7104d754a06370d81259,4d4b7105d754a06377d81259', // arts & entertainment, outdoors
+  food:        '4d4b7105d754a06374d81259',                          // dining & drinking
+  shopping:    '4d4b7105d754a06378d81259',                          // retail
+  kids:        '4d4b7104d754a06370d81259'                           // arts & entertainment
 };
+const FSQ_FIELDS = 'fsq_place_id,name,latitude,longitude,location,categories,distance,website,tel,hours,rating';
 app.get('/api/places', async (req, res) => {
   try{
     if(!FSQ) return res.status(503).json({ error: 'FSQ_API_KEY not set' });
     const { lat, lon, radius = '7000', category = 'food' } = req.query;
     if(!lat || !lon || !FSQ_CATS[category]) return res.status(400).json({ error: 'bad params' });
     const r = Math.min(parseInt(radius, 10) || 7000, 100000);
-    const url = 'https://api.foursquare.com/v3/places/search' +
-      `?ll=${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}` +
-      `&radius=${r}&categories=${FSQ_CATS[category]}&limit=50` +
-      '&fields=fsq_id%2Cname%2Cgeocodes%2Ccategories%2Clocation%2Cdistance%2Cwebsite%2Ctel%2Chours';
-    const data = await cached('fsq:' + url, 6 * 3600e3, async () => {
-      const rr = await fetch(url, { headers: { Authorization: FSQ, Accept: 'application/json' } });
-      if(!rr.ok) throw new Error('Foursquare HTTP ' + rr.status);
-      return rr.json();
+    const ll = `${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}`;
+    const mkUrl = (withFields, withCats) => `${FSQ_BASE}/places/search?ll=${ll}&radius=${r}&limit=50` +
+      (withCats ? `&fsq_category_ids=${FSQ_CATS[category]}` : '') +
+      (withFields ? `&fields=${encodeURIComponent(FSQ_FIELDS)}` : '');
+    const data = await cached('fsqn:' + category + ':' + ll + ':' + r, 6 * 3600e3, async () => {
+      // degrade gracefully if a field or category id is rejected
+      for(const [wf, wc] of [[true, true], [false, true], [false, false]]){
+        const rr = await fetch(mkUrl(wf, wc), { headers: FSQ_HDRS() });
+        if(rr.ok) return rr.json();
+        if(rr.status !== 400) throw new Error('Foursquare HTTP ' + rr.status);
+      }
+      throw new Error('Foursquare HTTP 400');
     });
     const items = (data.results || []).map(p => ({
-      fsqId: p.fsq_id || '',
+      fsqId: p.fsq_place_id || p.fsq_id || '',
       name: p.name,
       kind: (p.categories?.[0]?.name || '').toLowerCase(),
-      lat: p.geocodes?.main?.latitude,
-      lon: p.geocodes?.main?.longitude,
+      lat: p.latitude ?? p.geocodes?.main?.latitude,
+      lon: p.longitude ?? p.geocodes?.main?.longitude,
       dist: (p.distance || 0) / 1609,
       website: p.website || '',
       phone: p.tel || '',
       hours: p.hours?.display || '',
       openNow: typeof p.hours?.open_now === 'boolean' ? p.hours.open_now : null,
       addr: p.location?.formatted_address || '',
+      rating: p.rating ?? null,
       src: 'fsq'
     })).filter(p => p.lat != null && p.name);
     res.json({ items });
@@ -386,17 +397,23 @@ app.get('/api/fsqdetails', async (req, res) => {
     if(!FSQ) return res.status(503).json({ error: 'FSQ_API_KEY not set' });
     const id = String(req.query.id || '').replace(/[^\w]/g, '');
     if(!id) return res.status(400).json({ error: 'id required' });
-    const data = await cached('fd:' + id, 86400e3, async () => {
-      const rr = await fetch(`https://api.foursquare.com/v3/places/${id}?fields=rating%2Cprice%2Cphotos`,
-        { headers: { Authorization: FSQ, Accept: 'application/json' } });
-      if(!rr.ok) throw new Error('Foursquare HTTP ' + rr.status);
-      return rr.json();
+    const data = await cached('fdn:' + id, 86400e3, async () => {
+      const out = { rating: null, price: null, photo: '' };
+      try{
+        const rr = await fetch(`${FSQ_BASE}/places/${id}?fields=rating%2Cprice`, { headers: FSQ_HDRS() });
+        if(rr.ok){ const j = await rr.json(); out.rating = j.rating ?? null; out.price = j.price ?? null; }
+      }catch(e){}
+      try{
+        const pr = await fetch(`${FSQ_BASE}/places/${id}/photos?limit=1`, { headers: FSQ_HDRS() });
+        if(pr.ok){
+          const ph = await pr.json();
+          const first = Array.isArray(ph) ? ph[0] : ph?.photos?.[0];
+          if(first?.prefix) out.photo = first.prefix + '500x300' + first.suffix;
+        }
+      }catch(e){}
+      return out;
     });
-    res.json({
-      rating: data.rating ?? null,
-      price: data.price ?? null,
-      photo: data.photos?.[0] ? data.photos[0].prefix + '500x300' + data.photos[0].suffix : ''
-    });
+    res.json(data);
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
@@ -524,6 +541,7 @@ app.get('/api/layer-test', async (req, res) => {
     probe('gibs_satellite_dated', `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${yesterday}/GoogleMapsCompatible_Level9/4/5/4.jpg`),
     probe('gibs_fires', `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Thermal_Anomalies_375m_All/default/${yesterday}/GoogleMapsCompatible_Level8/4/5/4.png`),
     OWM ? probe('owm_clouds', `https://tile.openweathermap.org/map/clouds_new/4/4/5.png?appid=${OWM}`) : Promise.resolve(out.owm_clouds = { error: 'no key' }),
+    FSQ ? probe('fsq_search', `${FSQ_BASE}/places/search?ll=42.33%2C-83.05&radius=1000&limit=1`, { headers: FSQ_HDRS() }) : Promise.resolve(out.fsq_search = { error: 'no key' }),
     probe('rainviewer_meta', 'https://api.rainviewer.com/public/weather-maps.json')
   ]);
   res.json(out);

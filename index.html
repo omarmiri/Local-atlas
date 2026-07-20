@@ -1190,7 +1190,7 @@ function getAllPOIs(){
   const { lat, lon } = state.place;
   const promise = (async ()=>{
     // warm local cache: same spot + radius within 24 h loads instantly
-    const lsKey = `poiv4:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
+    const lsKey = `poiv5:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
     try{
       const c = JSON.parse(localStorage.getItem(lsKey) || 'null');
       if(c && Date.now() - c.t < 864e5) return c.b;
