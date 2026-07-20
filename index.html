@@ -60,6 +60,13 @@
     box-shadow:var(--shadow);
   }
   .reopen.show{display:block}
+  .reopen-right{
+    display:block;left:auto;right:0;top:70px;
+    border-radius:10px 0 0 10px;
+    background:var(--sun);color:var(--ink);
+    padding:12px 12px 12px 14px;
+  }
+  .reopen-right[hidden]{display:none}
   .head-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .hide-btn{
     background:transparent;border:0;color:#CFE3D9;cursor:pointer;
@@ -503,6 +510,7 @@
     }
     .panel.slid{transform:translateY(110%)}
     .reopen{top:auto;bottom:0;left:0;right:0;border-radius:12px 12px 0 0;text-align:center}
+    .reopen-right{top:auto;bottom:40vh;left:auto;right:0;border-radius:10px 0 0 10px;text-align:left}
     .panel.collapsed{height:118px}
     .panel.collapsed .place-badge,
     .panel.collapsed .tabs,
@@ -525,6 +533,7 @@
 <div class="hint-chip" id="hintChip">Tap anywhere on the map to explore that area</div>
 <button class="alert-banner" id="alertBanner" hidden></button>
 <button class="reopen" id="reopenBtn">◂ Local Atlas</button>
+<button class="reopen reopen-right" id="statesReopen">◂ US Ranks</button>
 <div class="layerbox">
   <button class="radar-btn" id="layersBtn" aria-expanded="false">◐ Layers</button>
   <span class="radar-time" id="radarTime" hidden></span>
@@ -543,7 +552,6 @@
     <div class="head-top">
       <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.1</span></div>
       <div>
-        <button class="hide-btn" id="statesBtn" aria-label="Top US States leaderboards" title="Top US States">🏆</button>
         <button class="hide-btn" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
       </div>
@@ -585,7 +593,7 @@
   <div class="content" id="content">
     <div class="empty-state">
       <h2>Pick a place to start</h2>
-      <p>Enter a US ZIP, Canadian postal code, or a city name, or use your current location.
+      <p>Enter a US ZIP, Canadian postal code, or a city name, or use your current location. The “US Ranks” tab on the right opens the state leaderboards.
          Your last place is remembered for next time.</p>
       <p style="margin-top:10px">Once you're in, zoom out on the map and tap any
          nearby town marker to explore it the same way.</p>
@@ -595,7 +603,7 @@
 
 <aside class="states-panel" id="statesPanel" aria-label="Top US States leaderboards">
   <div class="states-head">
-    <h2>🏆 Top US States</h2>
+    <h2>Top US States</h2>
     <button class="hide-btn states-close" id="statesClose" aria-label="Close leaderboards">✕</button>
   </div>
   <div class="states-content" id="statesContent"></div>
@@ -2225,11 +2233,11 @@ const STATES_CATS = [
   ['events', '🎟 Most happening'],
   ['visit', '🌤 Visit this month']
 ];
-$('statesBtn').addEventListener('click', ()=>{ statesMode ? exitStates() : enterStates(); });
+$('statesReopen').addEventListener('click', enterStates);
 let mainHiddenForStates = false;
 function enterStates(){
   statesMode = true;
-  $('statesBtn').style.color = 'var(--sun)';
+  $('statesReopen').hidden = true;
   $('statesPanel').classList.add('open');
   if(window.matchMedia('(max-width:640px)').matches){
     hidePanel();
@@ -2241,7 +2249,7 @@ function enterStates(){
 }
 function exitStates(){
   statesMode = false;
-  $('statesBtn').style.color = '';
+  $('statesReopen').hidden = false;
   $('statesPanel').classList.remove('open');
   statesLayer.clearLayers();
   if(mainHiddenForStates){ showPanel(); mainHiddenForStates = false; }
