@@ -482,20 +482,27 @@ app.get('/api/webcams', async (req, res) => {
       if(!rr.ok) throw new Error('Windy HTTP ' + rr.status);
       return rr.json();
     });
-    const cams = (data.webcams || []).map(w => ({
-      id: w.webcamId || w.id || '',
-      title: w.title || 'Webcam',
-      lat: w.location?.latitude,
-      lon: w.location?.longitude,
-      city: [w.location?.city, w.location?.region].filter(Boolean).join(', '),
-      img: w.images?.current?.preview || w.images?.current?.thumbnail || '',
-      page: w.urls?.detail || w.urls?.webcam ||
-            (w.webcamId ? 'https://www.windy.com/webcams/' + w.webcamId : ''),
-      playerLive: typeof w.player?.live === 'string' && w.player.live.startsWith('http') ? w.player.live : '',
-      playerDay: [w.player?.day, w.player?.month]
-        .find(u => typeof u === 'string' && u.startsWith('http')) || '',
-      live: typeof w.player?.live === 'string' || w.player?.live === true
-    })).filter(w => w.img && w.lat != null);
+    const cams = (data.webcams || []).map(w => {
+      const pid = w.webcamId || w.id || '';
+      const pl = w.player || {};
+      // v3 sometimes returns player modes as flags rather than URLs — Windy's
+      // embed player URL is deterministic, so build it from the cam id
+      const embed = m => pid ? `https://webcams.windy.com/webcams/public/embed/player/${pid}/${m}` : '';
+      const asUrl = (v, m) => typeof v === 'string' && v.startsWith('http') ? v : (v ? embed(m) : '');
+      return {
+        id: pid,
+        title: w.title || 'Webcam',
+        lat: w.location?.latitude,
+        lon: w.location?.longitude,
+        city: [w.location?.city, w.location?.region].filter(Boolean).join(', '),
+        img: w.images?.current?.preview || w.images?.current?.thumbnail || '',
+        page: w.urls?.detail || w.urls?.webcam ||
+              (pid ? 'https://www.windy.com/webcams/' + pid : ''),
+        playerLive: asUrl(pl.live, 'live'),
+        playerDay: asUrl(pl.day, 'day') || asUrl(pl.month, 'month'),
+        live: !!pl.live
+      };
+    }).filter(w => w.img && w.lat != null);
     res.json({ cams });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
