@@ -902,7 +902,7 @@ async function renderTab(name){
       if(token!==state.reqToken || state.tab!=='alerts') return;
       renderAlerts(a);
     }else if(name==='news'){
-      showLoading('Searching local news… (10–20 s)');
+      showLoading('Searching local news…');
       const n = await getNews(token);
       if(token!==state.reqToken || state.tab!=='news') return;
       renderNews(n);
@@ -917,7 +917,7 @@ async function renderTab(name){
       if(token!==state.reqToken || state.tab!=='events') return;
       renderEvents(ev);
     }else if(name==='brief'){
-      showLoading('Writing your local brief… (10–20 s)');
+      showLoading('Writing your local brief…');
       let t = null, aiFailed = false;
       try{ t = await getBrief(); }catch(e){ aiFailed = true; }
       if(token!==state.reqToken || state.tab!=='brief') return;
@@ -1371,7 +1371,7 @@ function drawPOIs(kind){
         `</div>`;
     }
   }
-  html += `<div class="sec-note">${items.length} places within ~${(state.radiusM/1609).toFixed(0)} miles · tap an entry for details · all pinned on the map</div>`;
+  html += `<div class="sec-note">${items.length} places within ~${(state.radiusM/1609).toFixed(0)} miles</div>`;
   let idx = 0;
   for(const it of items){
     html += `
@@ -1686,8 +1686,7 @@ function renderBrief(text){
     .replace(/^(OVERVIEW|NEWS|COMMUNITY|THIS WEEK)\s*:?\s*$/gm, '<span class="bhead">$1</span>')
     .replace(/\n\n+/g, '</p><p>')
     .replace(/\n/g, '<br>');
-  contentEl.innerHTML = `<div class="brief"><p>${html}</p></div>
-    <div class="sec-note">AI-generated from live local data — may contain errors.</div>`;
+  contentEl.innerHTML = `<div class="brief"><p>${html}</p></div>`;
 }
 
 /* When the AI call fails (credits exhausted, service down), fall back to a
@@ -1816,9 +1815,7 @@ async function getSocial(){
 function renderSocial(posts){
   let html = socialLinks();
   if(posts === null){
-    html += `<div class="empty-state"><p>Reddit couldn't be reached from here right now —
-      it blocks some networks and proxies. The platform links above still work,
-      and this tab retries each time you open it.</p></div>`;
+    html += `<div class="empty-state"><p>Reddit couldn't be reached right now — the links above still work.</p></div>`;
     contentEl.innerHTML = html; state.cache.social = undefined; return;
   }
   if(!posts.length){
@@ -1963,7 +1960,6 @@ function renderNews(items){
         ${n.source ? `<div class="src">${esc(n.source)}</div>` : ''}
       </div>`;
   }
-  html += `<div class="sec-note">Live headline search — open the outlets for full stories.</div>`;
   contentEl.innerHTML = html;
 }
 
@@ -2262,9 +2258,7 @@ async function loadStatesCat(cat){
     `<button data-cat="${k}" aria-pressed="${k === cat}">${label}</button>`).join('');
   $('statesContent').innerHTML =
     `<div class="filterrow states-chips">${chips}</div>
-     <div class="loading"><div class="spinner"></div>${cat === 'weird'
-       ? 'Judging every state\u2019s \u201c&lt;State&gt; man\u201d headlines\u2026 first run of the day takes up to a minute'
-       : 'Ranking the states\u2026'}</div>`;
+     <div class="loading"><div class="spinner"></div>Ranking the states\u2026</div>`;
   wireStateChips();
   try{
     const r = await fetchT('/api/states/' + cat, {}, 90000);
@@ -2294,12 +2288,7 @@ function renderStates(cat, items){
     $('statesContent').innerHTML = html + `<div class="empty-state"><p>Nothing to rank right now.</p></div>`;
     wireStateChips(); return;
   }
-  const note = {
-    weird: 'AI-ranked from this week\u2019s live \u201c&lt;State&gt; man\u201d headlines \u2014 refreshed daily',
-    events: 'Ticketed volume + national-park events + seasonal festivals \u2014 AI-blended, refreshed twice daily',
-    visit: 'AI seasonal picks for this month \u2014 opinions, not facts'
-  }[cat];
-  html += `<div class="sec-note">${note}</div>`;
+
   items.forEach((it, i) => {
     const stateName = it.state || '';
     let metric = '', sub = '';
