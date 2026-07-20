@@ -324,14 +324,37 @@ app.get('/api/gibs-tile', async (req, res) => {
     const { z, x, y } = req.query;
     if(!L) throw new Error('bad layer');
     if(![z, x, y].every(v => /^\d+$/.test(String(v)))) throw new Error('bad coords');
-    const url = `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${L.id}/default/default/${L.tms}/${z}/${y}/${x}.${L.ext}`;
-    const buf = await cached('gibs:' + url, 30 * 60e3, async () => {
-      const rr = await fetch(url);
-      if(!rr.ok) throw new Error('GIBS HTTP ' + rr.status);
-      return Buffer.from(await rr.arrayBuffer());
+    const mkUrl = t => `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${L.id}/default/${t}/${L.tms}/${z}/${y}/${x}.${L.ext}`;
+    const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+    const buf = await cached('gibs:' + L.id + ':' + z + ':' + y + ':' + x, 30 * 60e3, async () => {
+      for(const t of ['default', yesterday]){
+        const rr = await fetch(mkUrl(t));
+        if(rr.ok) return Buffer.from(await rr.arrayBuffer());
+      }
+      throw new Error('GIBS unavailable');
     });
     res.type(L.ext === 'jpg' ? 'image/jpeg' : 'image/png').send(buf);
   }catch(e){ res.status(502).send(''); }
+});
+
+/* ---- layer diagnostics: fetches one sample tile per provider, reports upstream status ---- */
+app.get('/api/layer-test', async (req, res) => {
+  const out = {};
+  const probe = async (name, url, opts) => {
+    try{
+      const rr = await fetch(url, opts);
+      out[name] = { status: rr.status, type: rr.headers.get('content-type') };
+    }catch(e){ out[name] = { error: String(e.message || e) }; }
+  };
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  await Promise.all([
+    probe('gibs_satellite_default', 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/default/GoogleMapsCompatible_Level9/4/5/4.jpg'),
+    probe('gibs_satellite_dated', `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${yesterday}/GoogleMapsCompatible_Level9/4/5/4.jpg`),
+    probe('gibs_fires', `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Thermal_Anomalies_375m_All/default/${yesterday}/GoogleMapsCompatible_Level8/4/5/4.png`),
+    OWM ? probe('owm_clouds', `https://tile.openweathermap.org/map/clouds_new/4/4/5.png?appid=${OWM}`) : Promise.resolve(out.owm_clouds = { error: 'no key' }),
+    probe('rainviewer_meta', 'https://api.rainviewer.com/public/weather-maps.json')
+  ]);
+  res.json(out);
 });
 
 app.use(express.static(path.join(__dirname)));
