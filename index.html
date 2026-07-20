@@ -159,6 +159,11 @@
     border-radius:8px;padding:7px 10px;cursor:pointer;text-align:left;white-space:nowrap;
   }
   .layer-menu button[aria-pressed="true"]{background:var(--sign-green);border-color:var(--sign-green);color:#fff}
+  @media (max-width:640px){
+    .layerbox{top:56px}
+    .layer-menu{padding:6px;gap:4px}
+    .layer-menu button{font-size:.68rem;padding:6px 8px}
+  }
   .social-item{padding:11px 0;border-bottom:1px solid var(--line)}
   .social-item:last-child{border-bottom:none}
   .social-item h3{font-size:.9rem;font-weight:600;line-height:1.4}
@@ -2082,6 +2087,11 @@ async function makeOverlay(name){
   }
   throw new Error('unknown layer');
 }
+function syncLayersBtn(){
+  const n = Object.keys(overlayLayers).length;
+  $('layersBtn').textContent = n ? `◐ Layers · ${n}` : '◐ Layers';
+  $('layersBtn').setAttribute('aria-pressed', String(n > 0));
+}
 $('layersBtn').addEventListener('click', ()=>{
   const menu = $('layerMenu');
   const open = menu.hidden;
@@ -2095,6 +2105,7 @@ document.querySelectorAll('#layerMenu button').forEach(btn=>{
       overlayLayers[name].remove();
       delete overlayLayers[name];
       btn.setAttribute('aria-pressed','false');
+      syncLayersBtn();
       return;
     }
     const label = btn.textContent;
@@ -2104,6 +2115,9 @@ document.querySelectorAll('#layerMenu button').forEach(btn=>{
       overlayLayers[name] = layer.addTo(map);
       btn.textContent = label;
       btn.setAttribute('aria-pressed','true');
+      $('layerMenu').hidden = true;
+      $('layersBtn').setAttribute('aria-expanded','false');
+      syncLayersBtn();
     }catch(e){
       btn.textContent = /key/.test(e.message) ? label + ' — needs key' : label + ' — unavailable';
       setTimeout(()=>{ btn.textContent = label; }, 2500);
@@ -2113,6 +2127,7 @@ document.querySelectorAll('#layerMenu button').forEach(btn=>{
 document.addEventListener('click', e=>{
   if(!e.target.closest('.layerbox')) $('layerMenu').hidden = true;
 });
+map.on('click movestart', ()=>{ $('layerMenu').hidden = true; });
 
 /* ---------------- panel show/hide ---------------- *//* ---------------- panel show/hide ---------------- */
 function refreshMapSize(){ setTimeout(()=>map.invalidateSize(), 320); }
