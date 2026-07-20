@@ -228,29 +228,58 @@
   }
   .cam-modal{
     position:fixed;inset:0;z-index:2000;
-    background:rgba(9,20,15,.88);
-    display:flex;flex-direction:column;
+    background:rgba(9,20,15,.8);
+    display:flex;align-items:center;justify-content:center;padding:20px;
   }
   .cam-modal[hidden]{display:none}
-  .cam-modal-head{
-    display:flex;justify-content:space-between;align-items:center;gap:12px;
-    padding:12px 16px;color:#fff;
-    font-family:'Overpass',sans-serif;font-weight:700;font-size:.9rem;
+  .cam-shell{
+    display:flex;flex-direction:column;
+    width:min(940px,100%);height:min(78vh,640px);
+    background:var(--paper);border-radius:var(--radius);
+    border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden;
   }
-  .cam-modal-head a{color:var(--sun);font-size:.78rem;margin-right:14px}
-  .cam-modal-actions{display:flex;align-items:center;gap:10px}
+  .cam-modal-head{
+    display:flex;align-items:center;gap:12px;
+    background:var(--sign-green);color:#fff;padding:10px 14px;
+  }
+  .cam-brand{
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:.72rem;
+    letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;
+  }
+  .cam-brand em{font-style:normal;color:var(--sun)}
+  #camModalTitle{
+    flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.85rem;
+  }
+  .cam-modal-actions{display:flex;align-items:center;gap:8px}
+  .cam-modal-actions a{color:var(--sun);font-size:.74rem;text-decoration:none;white-space:nowrap}
   .cam-mode{
     background:transparent;border:1.5px solid rgba(255,255,255,.5);color:#fff;
     border-radius:99px;font-family:'Overpass',sans-serif;font-weight:700;
-    font-size:.72rem;padding:4px 11px;cursor:pointer;
+    font-size:.7rem;padding:4px 10px;cursor:pointer;
   }
   .cam-mode[aria-pressed="true"]{background:var(--sun);border-color:var(--sun);color:var(--ink)}
   .cam-modal-close{
-    background:transparent;border:2px solid rgba(255,255,255,.5);color:#fff;
-    border-radius:8px;font-size:1rem;padding:4px 10px;cursor:pointer;
+    background:transparent;border:1.5px solid rgba(255,255,255,.5);color:#fff;
+    border-radius:8px;font-size:.9rem;padding:3px 9px;cursor:pointer;
   }
   .cam-modal-close:hover{border-color:#fff}
+  .cam-hint{
+    background:#FFFAEB;border-bottom:1px solid var(--line);color:var(--ink);
+    font-size:.8rem;padding:8px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  }
+  .cam-hint[hidden]{display:none}
+  .cam-hint button{
+    background:var(--sign-green);color:#fff;border:0;border-radius:99px;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.72rem;
+    padding:5px 12px;cursor:pointer;
+  }
   .cam-modal iframe{flex:1;border:0;width:100%;background:#000}
+  @media (max-width:640px){
+    .cam-modal{padding:0}
+    .cam-shell{width:100%;height:100%;border-radius:0;border:0}
+    .cam-brand{display:none}
+  }
   .cam-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
   .cam-card{display:block;text-decoration:none;color:var(--ink)}
   .cam-imgwrap{position:relative;border-radius:10px;overflow:hidden;background:#E8EDEA}
@@ -590,7 +619,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.9</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.0</span></div>
       <div>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -643,18 +672,25 @@
 </aside>
 
 <div class="cam-modal" id="camModal" hidden>
-  <div class="cam-modal-head">
-    <span id="camModalTitle"></span>
-    <span class="cam-modal-actions">
-      <span id="camModeWrap" hidden>
-        <button class="cam-mode" id="camModeLive" aria-pressed="true">Live</button>
-        <button class="cam-mode" id="camModeDay" aria-pressed="false">Timelapse</button>
+  <div class="cam-shell">
+    <div class="cam-modal-head">
+      <span class="cam-brand">Local Atlas <em>Cams</em></span>
+      <span id="camModalTitle"></span>
+      <span class="cam-modal-actions">
+        <span id="camModeWrap" hidden>
+          <button class="cam-mode" id="camModeLive" aria-pressed="true">Live</button>
+          <button class="cam-mode" id="camModeDay" aria-pressed="false">Timelapse</button>
+        </span>
+        <a id="camModalExt" href="#" target="_blank" rel="noopener">Windy ↗</a>
+        <button class="cam-modal-close" id="camModalClose" aria-label="Close webcam">✕</button>
       </span>
-      <a id="camModalExt" href="#" target="_blank" rel="noopener">Open on Windy</a>
-      <button class="cam-modal-close" id="camModalClose" aria-label="Close webcam">✕</button>
-    </span>
+    </div>
+    <div class="cam-hint" id="camHint" hidden>
+      Live stream not starting? This camera's feed may be down.
+      <button id="camHintSwitch">Watch the timelapse instead</button>
+    </div>
+    <iframe id="camFrame" title="Webcam player" allow="autoplay; fullscreen"></iframe>
   </div>
-  <iframe id="camFrame" title="Webcam player" allow="autoplay; fullscreen"></iframe>
 </div>
 
 <aside class="states-panel" id="statesPanel" aria-label="Top US States leaderboards">
@@ -1810,38 +1846,52 @@ function renderCams(cams){
   contentEl.querySelectorAll('.cam-card').forEach(card => {
     card.addEventListener('click', ev => {
       const c = (state.cache.cams || [])[+card.dataset.cam];
-      if(!c || !(c.playerLive || c.playerDay || c.player)){ card.target = '_blank'; return; }
+      if(!c) return;
       ev.preventDefault();
-      openCamModal(c);
+      openCamModal(c);           // every cam has an in-app player (day embed at minimum)
     });
   });
 }
-let camCurrent = null;
+let camCurrent = null, camHintTimer = null;
+const LIVE_HINT_MS = 10000;      // our own patience budget for flaky live feeds
+const camEmbed = (id, m) => `https://webcams.windy.com/webcams/public/embed/player/${id}/${m}`;
+function camUrls(c){
+  return {
+    live: c.playerLive || (c.live && c.id ? camEmbed(c.id, 'live') : ''),
+    day:  c.playerDay || (c.id ? camEmbed(c.id, 'day') : '') || c.player || ''
+  };
+}
+function clearCamHint(){
+  clearTimeout(camHintTimer); camHintTimer = null;
+  $('camHint').hidden = true;
+}
 function setCamMode(mode){
   if(!camCurrent) return;
-  const url = mode === 'live' ? camCurrent.playerLive : camCurrent.playerDay;
+  const u = camUrls(camCurrent);
+  const url = mode === 'live' ? u.live : u.day;
   if(!url) return;
+  clearCamHint();
   $('camFrame').src = url;
   $('camModeLive').setAttribute('aria-pressed', String(mode === 'live'));
   $('camModeDay').setAttribute('aria-pressed', String(mode === 'day'));
+  if(mode === 'live' && u.day){
+    camHintTimer = setTimeout(()=>{ $('camHint').hidden = false; }, LIVE_HINT_MS);
+  }
 }
 function openCamModal(c){
   camCurrent = c;
+  const u = camUrls(c);
   $('camModalTitle').textContent = c.title;
-  $('camModalExt').href = c.page || c.playerLive || c.playerDay || c.player || '#';
-  const both = !!(c.playerLive && c.playerDay);
-  $('camModeWrap').hidden = !both;
-  const start = c.playerLive || c.playerDay || c.player;
-  $('camFrame').src = start;
-  if(both){
-    $('camModeLive').setAttribute('aria-pressed', String(start === c.playerLive));
-    $('camModeDay').setAttribute('aria-pressed', String(start === c.playerDay));
-  }
+  $('camModalExt').href = c.page || u.live || u.day || '#';
+  $('camModeWrap').hidden = !(u.live && u.day);
   $('camModal').hidden = false;
+  setCamMode(u.live ? 'live' : 'day');
 }
 $('camModeLive').addEventListener('click', ()=> setCamMode('live'));
 $('camModeDay').addEventListener('click', ()=> setCamMode('day'));
+$('camHintSwitch').addEventListener('click', ()=> setCamMode('day'));
 function closeCamModal(){
+  clearCamHint();
   $('camModal').hidden = true;
   $('camFrame').src = 'about:blank';       // stop the stream
 }
