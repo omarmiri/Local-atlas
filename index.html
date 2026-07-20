@@ -159,7 +159,20 @@
     border-radius:8px;padding:7px 10px;cursor:pointer;text-align:left;white-space:nowrap;
   }
   .layer-menu button[aria-pressed="true"]{background:var(--sign-green);border-color:var(--sign-green);color:#fff}
+  .radar-time{
+    display:block;margin-top:6px;text-align:center;
+    background:var(--sign-green);color:#fff;border-radius:99px;
+    font-family:'IBM Plex Mono',monospace;font-size:.68rem;padding:3px 10px;
+  }
+  .alert-banner{
+    position:fixed;z-index:950;top:16px;left:50%;transform:translateX(-50%);
+    background:var(--alert);color:#fff;border:0;cursor:pointer;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.78rem;
+    padding:9px 16px;border-radius:99px;box-shadow:var(--shadow);
+    white-space:nowrap;max-width:calc(100vw - 32px);overflow:hidden;text-overflow:ellipsis;
+  }
   @media (max-width:640px){
+    .alert-banner{top:12px;font-size:.72rem}
     .layerbox{top:56px}
     .layer-menu{padding:6px;gap:4px}
     .layer-menu button{font-size:.68rem;padding:6px 8px}
@@ -468,9 +481,11 @@
 
 <div id="map" role="application" aria-label="Map of the United States and Canada"></div>
 <div class="hint-chip" id="hintChip">Tap anywhere on the map to explore that area</div>
+<button class="alert-banner" id="alertBanner" hidden></button>
 <button class="reopen" id="reopenBtn">◂ Local Atlas</button>
 <div class="layerbox">
   <button class="radar-btn" id="layersBtn" aria-expanded="false">◐ Layers</button>
+  <span class="radar-time" id="radarTime" hidden></span>
   <div class="layer-menu" id="layerMenu" hidden>
     <button data-layer="radar" aria-pressed="false">☂ Rain radar</button>
     <button data-layer="satellite" aria-pressed="false">🛰 Satellite · clouds &amp; smoke</button>
@@ -781,9 +796,15 @@ async function loadPlace(place, { fly=true } = {}){
   selectTab(state.tab, true);
   getAllPOIs().catch(()=>{});   // one combined request warms all four list tabs
   // prefetch alerts so the badge count shows even before that tab is opened
+  $('alertBanner').hidden = true;
   getAlerts(token).then(a => {
     if(token !== state.reqToken) return;
-    if(a && a.length){ const c=$('alertCnt'); c.textContent=a.length; c.style.display='inline-block'; }
+    if(a && a.length){
+      const c=$('alertCnt'); c.textContent=a.length; c.style.display='inline-block';
+      const b=$('alertBanner');
+      b.textContent = `⚠ ${a.length} active weather alert${a.length>1?'s':''} — tap to view`;
+      b.hidden = false;
+    }
   }).catch(()=>{});
 }
 
@@ -2059,19 +2080,32 @@ const GIBS_DIRECT = {
   satellite: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/default/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg',
   fires:     'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Thermal_Anomalies_375m_All/default/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png'
 };
+async function startRadarLoop(){
+  const be = await state.backendP;
+  const meta = be.ok ? await fetchJSON('/api/radar/meta')
+                     : await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
+  const frames = (meta.radar?.past || []).filter(f=>f.path).slice(-7);   // last ~hour, 10-min steps
+  if(!frames.length) throw new Error('no radar frames');
+  const mkURL = fr => be.ok
+    ? `/api/radar/tile?p=${encodeURIComponent(fr.path)}&z={z}&x={x}&y={y}`
+    : `${meta.host || 'https://tilecache.rainviewer.com'}${fr.path}/512/{z}/{x}/{y}/2/1_1.png`;
+  const layers = frames.map(fr => L.tileLayer(mkURL(fr), {
+    opacity:0, tileSize:512, zoomOffset:-1, maxNativeZoom:7, maxZoom:19, attribution:'RainViewer'
+  }).addTo(map));
+  const label = $('radarTime');
+  label.hidden = false;
+  let idx = layers.length - 1;
+  const show = i => {
+    layers.forEach((l,j)=>l.setOpacity(j===i ? .65 : 0));
+    label.textContent = '☂ ' + new Date(frames[i].time*1000)
+      .toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  };
+  show(idx);
+  const timer = setInterval(()=>{ idx = (idx+1) % layers.length; show(idx); }, 900);
+  return { remove(){ clearInterval(timer); layers.forEach(l=>l.remove()); label.hidden = true; } };
+}
 async function makeOverlay(name){
   const be = await state.backendP;
-  if(name === 'radar'){
-    const d = be.ok ? await fetchJSON('/api/radar/meta')
-                    : await fetchJSON('https://api.rainviewer.com/public/weather-maps.json');
-    const fr = d.radar?.past?.slice(-1)[0];
-    if(!fr?.path) throw new Error('no radar frames');
-    const url = be.ok
-      ? `/api/radar/tile?p=${encodeURIComponent(fr.path)}&z={z}&x={x}&y={y}`
-      : `${d.host || 'https://tilecache.rainviewer.com'}${fr.path}/512/{z}/{x}/{y}/2/1_1.png`;
-    return L.tileLayer(url, { opacity:.65, tileSize:512, zoomOffset:-1,
-      maxNativeZoom:7, maxZoom:19, attribution:'RainViewer' });
-  }
   if(name === 'clouds' || name === 'temp'){
     if(!be.owm) throw new Error('needs OpenWeather key');
     const lyr = name === 'clouds' ? 'clouds_new' : 'temp_new';
@@ -2111,8 +2145,9 @@ document.querySelectorAll('#layerMenu button').forEach(btn=>{
     const label = btn.textContent;
     btn.textContent = '… loading';
     try{
-      const layer = await makeOverlay(name);
-      overlayLayers[name] = layer.addTo(map);
+      overlayLayers[name] = name === 'radar'
+        ? await startRadarLoop()
+        : (await makeOverlay(name)).addTo(map);
       btn.textContent = label;
       btn.setAttribute('aria-pressed','true');
       $('layerMenu').hidden = true;
@@ -2143,6 +2178,12 @@ function showPanel(){
   document.body.classList.remove('panel-away');
   refreshMapSize();
 }
+$('alertBanner').addEventListener('click', ()=>{
+  showPanel();
+  $('panel').classList.remove('collapsed');
+  document.body.classList.remove('panel-mini');
+  selectTab('alerts');
+});
 $('hideBtn').addEventListener('click', hidePanel);
 $('reopenBtn').addEventListener('click', showPanel);
 

@@ -19,19 +19,53 @@ const AI = process.env.GEMINI_API_KEY || '';
 const OWM = process.env.OPENWEATHER_API_KEY || '';
 const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';  // cheapest tier, auto-tracks latest
 
-/* ---- tiny TTL cache ---- */
+/* ---- two-level TTL cache: in-memory L1, optional Upstash Redis L2 ----
+   Redis survives restarts and free-tier spin-downs, so one visitor's lookups
+   warm the cache for everyone, permanently. Configure with
+   UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN; works without them. */
 const cache = new Map();
-function cached(key, ttlMs, fn){
+const RURL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '');
+const RTOK = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+async function redisGet(key){
+  if(!RURL) return null;
+  try{
+    const r = await fetch(`${RURL}/get/${encodeURIComponent(key)}`,
+      { headers: { Authorization: 'Bearer ' + RTOK } });
+    if(!r.ok) return null;
+    const j = await r.json();
+    return typeof j.result === 'string' ? j.result : null;
+  }catch(e){ return null; }
+}
+function redisSet(key, val, ttlMs){
+  if(!RURL) return;
+  fetch(`${RURL}/set/${encodeURIComponent(key)}?px=${Math.max(1000, Math.round(ttlMs))}`,
+    { method: 'POST', headers: { Authorization: 'Bearer ' + RTOK }, body: val })
+    .catch(()=>{});
+}
+const encVal = v => Buffer.isBuffer(v) ? 'b64:' + v.toString('base64')
+  : typeof v === 'string' ? 'str:' + v : 'jsn:' + JSON.stringify(v);
+function decVal(s){
+  const tag = s.slice(0, 4), body = s.slice(4);
+  if(tag === 'b64:') return Buffer.from(body, 'base64');
+  if(tag === 'str:') return body;
+  try{ return JSON.parse(body); }catch(e){ return null; }
+}
+async function cached(key, ttlMs, fn){
   const hit = cache.get(key);
-  if(hit && Date.now() - hit.t < ttlMs) return Promise.resolve(hit.v);
-  return fn().then(v => {
-    cache.set(key, { t: Date.now(), v });
-    if(cache.size > 600){ cache.delete(cache.keys().next().value); }
-    return v;
-  });
+  if(hit && Date.now() - hit.t < ttlMs) return hit.v;
+  const rv = await redisGet(key);
+  if(rv != null){
+    const v = decVal(rv);
+    if(v != null){ cache.set(key, { t: Date.now(), v }); return v; }
+  }
+  const v = await fn();
+  cache.set(key, { t: Date.now(), v });
+  if(cache.size > 600){ cache.delete(cache.keys().next().value); }
+  redisSet(key, encVal(v), ttlMs);
+  return v;
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM }));
+app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL }));
 
 /* ---- Foursquare places ---- */
 const FSQ_CATS = {
@@ -302,4 +336,9 @@ app.get('/api/gibs-tile', async (req, res) => {
 
 app.use(express.static(path.join(__dirname)));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+const SELF = (process.env.SELF_PING_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+if(SELF){
+  setInterval(() => { fetch(SELF + '/api/health').catch(()=>{}); }, 10 * 60e3);
+  console.log('keep-alive: pinging ' + SELF + ' every 10 min');
+}
 app.listen(PORT, () => console.log('local-atlas listening on :' + PORT));
