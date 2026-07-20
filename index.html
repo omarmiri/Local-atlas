@@ -58,13 +58,12 @@
     letter-spacing:.04em;text-transform:uppercase;
     padding:12px 14px 12px 12px;border-radius:0 10px 10px 0;
     box-shadow:var(--shadow);
+    width:164px;text-align:left;
   }
   .reopen.show{display:block}
   .reopen-right{
     display:block;left:0;right:auto;top:70px;
-    border-radius:0 10px 10px 0;
     background:var(--sun);color:var(--ink);
-    padding:12px 14px 12px 12px;
   }
   .reopen-right[hidden]{display:none}
   .head-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -509,8 +508,11 @@
       transition:height .25s ease, transform .3s ease;
     }
     .panel.slid{transform:translateY(110%)}
-    .reopen{top:auto;bottom:0;left:0;right:0;border-radius:12px 12px 0 0;text-align:center}
-    .reopen-right{top:auto;bottom:126px;left:0;right:auto;width:auto;border-radius:0 10px 10px 0;text-align:left}
+    .reopen{top:auto;bottom:0;left:0;right:0;width:100%;border-radius:0;text-align:center}
+    .leaflet-bottom.leaflet-right{margin-bottom:96px}
+    .reopen-right{top:auto;bottom:50vh;left:0;right:0;width:100%;border-radius:12px 12px 0 0;text-align:center}
+    body.panel-away .reopen-right{bottom:44px}
+    body.panel-mini .reopen-right{bottom:118px}
     .panel.collapsed{height:118px}
     .panel.collapsed .place-badge,
     .panel.collapsed .tabs,
@@ -532,7 +534,7 @@
 <div id="map" role="application" aria-label="Map of the United States and Canada"></div>
 <div class="hint-chip" id="hintChip">Tap anywhere on the map to explore that area</div>
 <button class="alert-banner" id="alertBanner" hidden></button>
-<button class="reopen" id="reopenBtn">◂ Local Atlas</button>
+<button class="reopen" id="reopenBtn">Local Atlas ▸</button>
 <button class="reopen reopen-right" id="statesReopen">US Ranks ▸</button>
 <div class="layerbox">
   <button class="radar-btn" id="layersBtn" aria-expanded="false">◐ Layers</button>
@@ -550,7 +552,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.3</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.4</span></div>
       <div>
         <button class="hide-btn" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
