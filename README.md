@@ -29,7 +29,8 @@ remembered between visits.
    - `TICKETMASTER_API_KEY` — events tab
    - `CENSUS_API_KEY` — optional; raises rate limits on the county-profile lookups
    - `GEMINI_API_KEY` — the AI "Brief" tab (Gemini Flash-Lite, cheapest tier; free key at aistudio.google.com). Optional `GEMINI_MODEL` overrides the model.
-   - `OPENWEATHER_API_KEY` — optional; live Clouds and Temperature map layers (free key at openweathermap.org). Radar, Satellite, and Fire layers work without it.
+   - `OPENWEATHER_API_KEY` — optional; Clouds and Temperature map layers (free key at openweathermap.org; free tier is ~3 h delayed and 60 calls/min — the server caps and caches to stay under it).
+   - `NPS_API_KEY` — optional; national-park event counts in the Top States leaderboards (free key at nps.gov/subjects/developer).
 4. Deploy. Every feature degrades gracefully when its key is absent.
 
 Without `FSQ_API_KEY`, everything still works from OpenStreetMap — Foursquare

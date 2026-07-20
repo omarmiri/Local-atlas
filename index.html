@@ -521,8 +521,8 @@
   <div class="layer-menu" id="layerMenu" hidden>
     <button data-layer="radar" aria-pressed="false">☂ Rain radar</button>
     <button data-layer="satellite" aria-pressed="false">🛰 Satellite · clouds &amp; smoke</button>
-    <button data-layer="clouds" aria-pressed="false">☁ Clouds (live)</button>
-    <button data-layer="temp" aria-pressed="false">🌡 Temperature</button>
+    <button data-layer="clouds" aria-pressed="false" title="OpenWeather free tier runs ~3 h behind">☁ Clouds</button>
+    <button data-layer="temp" aria-pressed="false" title="OpenWeather free tier runs ~3 h behind">🌡 Temperature</button>
     <button data-layer="fires" aria-pressed="false">🔥 Fire hotspots</button>
   </div>
 </div>
@@ -2144,7 +2144,8 @@ async function makeOverlay(name){
     if(!be.owm) throw new Error('needs OpenWeather key');
     const lyr = name === 'clouds' ? 'clouds_new' : 'temp_new';
     return L.tileLayer(`/api/wx-tile?layer=${lyr}&z={z}&x={x}&y={y}`,
-      { opacity: name === 'temp' ? .5 : .8, maxZoom:19,
+      { opacity: name === 'temp' ? .5 : .8,
+        maxNativeZoom:8, maxZoom:19,        // weather data is coarse; slashes API calls
         errorTileUrl:TRANSPARENT_PNG, attribution:'OpenWeatherMap' });
   }
   if(name === 'satellite' || name === 'fires'){
@@ -2272,7 +2273,7 @@ function renderStates(cat, items){
   }
   const note = {
     weird: 'AI-ranked from this week\u2019s live \u201c&lt;State&gt; man\u201d headlines \u2014 refreshed daily',
-    events: 'Ticketed events in the next 30 days, via Ticketmaster',
+    events: 'Ticketed volume + national-park events + seasonal festivals \u2014 AI-blended, refreshed twice daily',
     visit: 'AI seasonal picks for this month \u2014 opinions, not facts'
   }[cat];
   html += `<div class="sec-note">${note}</div>`;
@@ -2281,10 +2282,13 @@ function renderStates(cat, items){
     let metric = '', sub = '';
     if(cat === 'weird'){
       metric = 'weirdness ' + (typeof it.score === 'number' ? it.score.toFixed(1) : it.score);
-      sub = it.headline ? `<div class="deal-snip">\u201c${esc(it.headline)}\u201d</div>` : '';
+      const heads = Array.isArray(it.headlines) ? it.headlines : (it.headline ? [it.headline] : []);
+      sub = heads.slice(0, 3).map(h => `<div class="deal-snip">\u201c${esc(h)}\u201d</div>`).join('');
     }else if(cat === 'events'){
-      metric = (it.count || 0).toLocaleString() + ' events';
-      sub = it.top ? `<div class="kind" style="margin-top:3px">Biggest draw: ${esc(it.top)}</div>` : '';
+      metric = (it.count || 0).toLocaleString() + ' ticketed' + (it.nps ? ` \u00b7 ${it.nps} park events` : '');
+      sub = (it.festival ? `<div class="kind" style="margin-top:3px">\ud83c\udfaa ${esc(it.festival)}</div>` : '')
+          + (it.top ? `<div class="kind" style="margin-top:3px">Biggest draw: ${esc(it.top)}</div>` : '')
+          + (it.note ? `<div class="kind" style="margin-top:3px">${esc(it.note)}</div>` : '');
     }else{
       sub = it.why ? `<div class="kind" style="margin-top:3px">${esc(it.why)}</div>` : '';
     }

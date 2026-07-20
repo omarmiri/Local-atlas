@@ -17,6 +17,7 @@ const TM = process.env.TICKETMASTER_API_KEY || '';
 const CENSUS = process.env.CENSUS_API_KEY || '';
 const AI = process.env.GEMINI_API_KEY || '';
 const OWM = process.env.OPENWEATHER_API_KEY || '';
+const NPS = process.env.NPS_API_KEY || '';
 const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';  // cheapest tier, auto-tracks latest
 
 /* ---- two-level TTL cache: in-memory L1, optional Upstash Redis L2 ----
@@ -65,7 +66,7 @@ async function cached(key, ttlMs, fn){
   return v;
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL }));
+app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS }));
 
 /* ---- Foursquare places ---- */
 const FSQ_CATS = {
@@ -236,7 +237,7 @@ app.get('/api/states/weird', async (req, res) => {
             encodeURIComponent(`"${name} man"`) + '&hl=en-US&gl=US&ceid=US:en';
           const rr = await fetch(feed);
           if(!rr.ok) return { name, abbr, lat, lon, titles: [] };
-          return { name, abbr, lat, lon, titles: rssTitles(await rr.text(), 5) };
+          return { name, abbr, lat, lon, titles: rssTitles(await rr.text(), 8) };
         }catch(e){ return { name, abbr, lat, lon, titles: [] }; }
       });
       let ranked;
@@ -245,12 +246,12 @@ app.get('/api/states/weird', async (req, res) => {
           .map(st => [st.name, st.titles]));
         ranked = await geminiJSON(
 `Below are recent news headlines that begin with or feature "<State> man". Score each state 0-10 for how absurd, silly, shocking, or dumb its "<State> man" stories are — the "Florida Man" phenomenon. Respond ONLY with a JSON array of the 12 weirdest states, best first:
-[{"state":"...","score":9.4,"headline":"the single funniest verbatim headline for that state"}]
+[{"state":"...","score":9.4,"headlines":["up to 3 of the funniest verbatim headlines for that state, funniest first"]}]
 
 HEADLINES:
 ${JSON.stringify(compact).slice(0, 14000)}`, 1200);
       }catch(e){
-        ranked = perState.map(st => ({ state: st.name, score: st.titles.length * 2, headline: st.titles[0] || '' }))
+        ranked = perState.map(st => ({ state: st.name, score: st.titles.length, headlines: st.titles.slice(0, 3) }))
           .sort((a, b) => b.score - a.score).slice(0, 12);
       }
       return ranked.map(r => {
@@ -262,27 +263,51 @@ ${JSON.stringify(compact).slice(0, 14000)}`, 1200);
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
-/* Most happening: Ticketmaster event volume per state, next 30 days */
+/* Most happening: Ticketmaster volume + national-park events + festivals (AI-blended) */
 app.get('/api/states/events', async (req, res) => {
   try{
     if(!TM) return res.status(503).json({ error: 'events not configured' });
-    const data = await cached('st:events', 12 * 3600e3, async () => {
+    const data = await cached('st:events:v2', 12 * 3600e3, async () => {
       const start = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
       const end = new Date(Date.now() + 30 * 864e5).toISOString().replace(/\.\d+Z$/, 'Z');
       const rows = await mapLimit(STATES, 3, async ([name, abbr, lat, lon]) => {
+        const row = { state: name, abbr, lat, lon, count: 0, top: '', nps: 0 };
         try{
           const url = 'https://app.ticketmaster.com/discovery/v2/events.json' +
             `?apikey=${TM}&stateCode=${abbr}&size=1&startDateTime=${start}&endDateTime=${end}`;
           const rr = await fetch(url);
-          if(!rr.ok) return { state: name, abbr, lat, lon, count: 0, top: '' };
-          const j = await rr.json();
-          await new Promise(r => setTimeout(r, 120));       // stay under TM rate limits
-          return { state: name, abbr, lat, lon,
-            count: j.page?.totalElements || 0,
-            top: j._embedded?.events?.[0]?.name || '' };
-        }catch(e){ return { state: name, abbr, lat, lon, count: 0, top: '' }; }
+          if(rr.ok){
+            const j = await rr.json();
+            row.count = j.page?.totalElements || 0;
+            row.top = j._embedded?.events?.[0]?.name || '';
+          }
+          await new Promise(r => setTimeout(r, 120));
+        }catch(e){}
+        if(NPS){
+          try{
+            const nr = await fetch(`https://developer.nps.gov/api/v1/events?stateCode=${abbr}&pageSize=1&api_key=${NPS}`);
+            if(nr.ok){ row.nps = parseInt((await nr.json()).total, 10) || 0; }
+          }catch(e){}
+        }
+        return row;
       });
-      return rows.sort((a, b) => b.count - a.count).slice(0, 12);
+      const month = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      let ranked;
+      try{
+        const compact = rows.map(r => ({ state: r.state, ticketed: r.count, parkEvents: r.nps }));
+        const ai = await geminiJSON(
+`It is ${month}. Below is per-state data: ticketed events in the next 30 days${NPS ? ' and national-park events' : ''}. Rank the 12 "most happening" US states for a visitor this month — blend the numbers with well-known festivals, state fairs, harvest celebrations, and cultural events that traditionally occur in ${month.split(' ')[0]}. Do not just rank by population or raw counts. Respond ONLY with a JSON array, best first:
+[{"state":"...","festival":"one notable festival/fair/celebration in that state this month (empty string if none)","note":"one short sentence on why this state is happening right now"}]
+
+DATA:
+${JSON.stringify(compact)}`, 1400);
+        ranked = ai.map(r => ({ ...rows.find(x => x.state === r.state), festival: r.festival || '', note: r.note || '' }))
+          .filter(r => r.state);
+      }catch(e){
+        ranked = rows.sort((a, b) => b.count - a.count).slice(0, 12)
+          .map(r => ({ ...r, festival: '', note: '' }));
+      }
+      return ranked;
     });
     res.json({ items: data });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
@@ -434,6 +459,14 @@ app.get('/api/radar/tile', async (req, res) => {
 });
 
 /* ---- OpenWeatherMap tile proxy (clouds / temperature; key stays server-side) ---- */
+let owmCalls = [];
+function owmAllowed(){
+  const now = Date.now();
+  owmCalls = owmCalls.filter(t => now - t < 60e3);
+  if(owmCalls.length >= 50) return false;    // hard ceiling under OWM's 60/min
+  owmCalls.push(now);
+  return true;
+}
 app.get('/api/wx-tile', async (req, res) => {
   try{
     if(!OWM) return res.status(503).send('');
@@ -441,7 +474,9 @@ app.get('/api/wx-tile', async (req, res) => {
     if(!['clouds_new','temp_new','wind_new','pressure_new'].includes(String(layer))) throw new Error('bad layer');
     if(![z, x, y].every(v => /^\d+$/.test(String(v)))) throw new Error('bad coords');
     const url = `https://tile.openweathermap.org/map/${layer}/${z}/${x}/${y}.png?appid=${OWM}`;
-    const buf = await cached('owm:' + url, 10 * 60e3, async () => {
+    // free-tier data is ~3 h stale anyway, so a 45-min tile cache loses nothing
+    const buf = await cached('owm:' + url, 45 * 60e3, async () => {
+      if(!owmAllowed()) throw new Error('OWM rate ceiling');
       const rr = await fetch(url);
       if(!rr.ok) throw new Error('OWM HTTP ' + rr.status);
       return Buffer.from(await rr.arrayBuffer());
@@ -500,5 +535,9 @@ const SELF = (process.env.SELF_PING_URL || process.env.RENDER_EXTERNAL_URL || ''
 if(SELF){
   setInterval(() => { fetch(SELF + '/api/health').catch(()=>{}); }, 10 * 60e3);
   console.log('keep-alive: pinging ' + SELF + ' every 10 min');
+  const warm = () => ['/api/states/visit', '/api/states/weird', '/api/states/events']
+    .forEach((ep, i) => setTimeout(() => fetch(SELF + ep).catch(()=>{}), i * 30e3));
+  setTimeout(warm, 30e3);                 // warm shortly after boot
+  setInterval(warm, 6 * 3600e3);          // and keep the daily caches fresh
 }
 app.listen(PORT, () => console.log('local-atlas listening on :' + PORT));
