@@ -18,6 +18,7 @@ const CENSUS = process.env.CENSUS_API_KEY || '';
 const AI = process.env.GEMINI_API_KEY || '';
 const OWM = process.env.OPENWEATHER_API_KEY || '';
 const NPS = process.env.NPS_API_KEY || '';
+const WINDY = process.env.WINDY_API_KEY || '';
 const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';  // cheapest tier, auto-tracks latest
 
 /* ---- two-level TTL cache: in-memory L1, optional Upstash Redis L2 ----
@@ -66,7 +67,7 @@ async function cached(key, ttlMs, fn){
   return v;
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS }));
+app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS, windy: !!WINDY }));
 
 /* ---- Foursquare places ---- */
 /* Legacy v3 was shut down May 15 2026 — this is the new Places API.
@@ -461,6 +462,38 @@ ${JSON.stringify(data).slice(0, 12000)}` }] }],
       return (j.candidates?.[0]?.content?.parts || []).map(pt => pt.text || '').join('').trim();
     });
     res.json({ text });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* ---- nearby webcams (Windy Webcams API v3) ----
+   Free-tier image URLs carry tokens that expire in 10 minutes, so the cache
+   TTL stays safely under that. */
+app.get('/api/webcams', async (req, res) => {
+  try{
+    if(!WINDY) return res.status(503).json({ error: 'not configured' });
+    const { lat, lon } = req.query;
+    if(!lat || !lon) return res.status(400).json({ error: 'bad params' });
+    const key = `wc:${(+lat).toFixed(2)},${(+lon).toFixed(2)}`;
+    const data = await cached(key, 8 * 60e3, async () => {
+      const url = 'https://api.windy.com/webcams/api/v3/webcams' +
+        `?nearby=${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}%2C80` +
+        '&limit=24&include=images%2Clocation%2Cplayer%2Curls';
+      const rr = await fetch(url, { headers: { 'x-windy-api-key': WINDY, Accept: 'application/json' } });
+      if(!rr.ok) throw new Error('Windy HTTP ' + rr.status);
+      return rr.json();
+    });
+    const cams = (data.webcams || []).map(w => ({
+      id: w.webcamId || w.id || '',
+      title: w.title || 'Webcam',
+      lat: w.location?.latitude,
+      lon: w.location?.longitude,
+      city: [w.location?.city, w.location?.region].filter(Boolean).join(', '),
+      img: w.images?.current?.preview || w.images?.current?.thumbnail || '',
+      page: w.urls?.detail || w.urls?.webcam ||
+            (w.webcamId ? 'https://www.windy.com/webcams/' + w.webcamId : ''),
+      live: !!(w.player?.live)
+    })).filter(w => w.img && w.lat != null);
+    res.json({ cams });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 

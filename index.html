@@ -225,6 +225,18 @@
     .layer-menu{padding:6px;gap:4px}
     .layer-menu button{font-size:.68rem;padding:6px 8px}
   }
+  .cam-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
+  .cam-card{display:block;text-decoration:none;color:var(--ink)}
+  .cam-imgwrap{position:relative;border-radius:10px;overflow:hidden;background:#E8EDEA}
+  .cam-imgwrap img{width:100%;aspect-ratio:16/10;object-fit:cover;display:block}
+  .cam-live{
+    position:absolute;top:6px;left:6px;
+    background:var(--alert);color:#fff;border-radius:5px;
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:.58rem;
+    letter-spacing:.08em;padding:2px 6px;
+  }
+  .cam-title{font-weight:600;font-size:.8rem;line-height:1.3;margin-top:6px}
+  .cam-meta{font-family:'IBM Plex Mono',monospace;font-size:.64rem;color:var(--ink-soft);margin-top:2px}
   .social-item{padding:11px 0;border-bottom:1px solid var(--line)}
   .social-item:last-child{border-bottom:none}
   .social-item h3{font-size:.9rem;font-weight:600;line-height:1.4}
@@ -552,7 +564,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.5</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.6</span></div>
       <div>
         <button class="hide-btn" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -587,6 +599,7 @@
     <button class="tab" role="tab" data-tab="food" aria-selected="false">Eat</button>
     <button class="tab" role="tab" data-tab="shopping" aria-selected="false">Shop</button>
     <button class="tab" role="tab" data-tab="kids" aria-selected="false">Kids</button>
+    <button class="tab" role="tab" data-tab="cams" aria-selected="false">Cams</button>
     <button class="tab" role="tab" data-tab="social" aria-selected="false">Social</button>
     <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved</button>
     <button class="tab" role="tab" data-tab="brief" aria-selected="false">Brief</button>
@@ -644,9 +657,9 @@ state.backendP = (async ()=>{
     const ctl = new AbortController();
     setTimeout(()=>ctl.abort(), 4000);
     const r = await fetch('/api/health', { signal: ctl.signal });
-    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, tm:!!j.tm, ai:!!j.ai, owm:!!j.owm }; }
+    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy }; }
   }catch(e){}
-  return { ok:false, fsq:false, tm:false, ai:false, owm:false };
+  return { ok:false, fsq:false, tm:false, ai:false, owm:false, windy:false };
 })();
 
 /* ---------------- map ---------------- */
@@ -925,6 +938,11 @@ async function renderTab(name){
       if(token!==state.reqToken || state.tab!=='brief') return;
       if(aiFailed) await renderBriefFallback();
       else renderBrief(t);
+    }else if(name==='cams'){
+      showLoading('Finding live webcams nearby…');
+      const c = await getCams();
+      if(token!==state.reqToken || state.tab!=='cams') return;
+      renderCams(c);
     }else if(name==='saved'){
       await renderSavedTab();
     }else{
@@ -1708,6 +1726,45 @@ async function renderBriefFallback(){
   html += sec('COMMUNITY', (social||[]).slice(0,5).map(p=>p.title));
   html += sec('THIS WEEK', (events||[]).slice(0,5).map(e=>e.name + (e.date ? ' — ' + e.date : '')));
   html += `</div>`;
+  contentEl.innerHTML = html;
+}
+
+/* ---------------- nearby webcams ---------------- */
+async function getCams(){
+  // image tokens expire ~10 min; refetch if the cached batch is stale
+  if(state.cache.cams && Date.now() - state.cache.camsAt < 8 * 60e3) return state.cache.cams;
+  const be = await state.backendP;
+  if(!be.windy){ state.cache.cams = null; state.cache.camsAt = Date.now(); return null; }
+  const r = await fetchT(`/api/webcams?lat=${state.place.lat}&lon=${state.place.lon}`, {}, 12000);
+  if(!r.ok) throw new Error('webcams HTTP ' + r.status);
+  state.cache.cams = (await r.json()).cams || [];
+  state.cache.camsAt = Date.now();
+  return state.cache.cams;
+}
+function renderCams(cams){
+  if(cams === null){
+    contentEl.innerHTML = `<div class="empty-state"><p>Live webcams aren't available right now.</p></div>`;
+    return;
+  }
+  if(!cams.length){
+    contentEl.innerHTML = `<div class="empty-state"><p>No public webcams found within about 50 miles.</p></div>`;
+    return;
+  }
+  const { lat, lon } = state.place;
+  let html = `<div class="cam-grid">`;
+  for(const c of cams){
+    const d = haversine(lat, lon, c.lat, c.lon);
+    html += `
+      <a class="cam-card" href="${esc(c.page)}" target="_blank" rel="noopener">
+        <div class="cam-imgwrap">
+          <img src="${esc(c.img)}" alt="${esc(c.title)}" loading="lazy">
+          ${c.live ? '<span class="cam-live">LIVE</span>' : ''}
+        </div>
+        <div class="cam-title">${esc(c.title)}</div>
+        <div class="cam-meta">${c.city ? esc(c.city) + ' · ' : ''}${d.toFixed(0)} mi</div>
+      </a>`;
+  }
+  html += `</div><div class="sec-note">Webcams via Windy.com</div>`;
   contentEl.innerHTML = html;
 }
 
