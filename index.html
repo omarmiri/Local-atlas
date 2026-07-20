@@ -72,6 +72,7 @@
     font-size:1.05rem;line-height:1;padding:4px 6px;border-radius:6px;
   }
   .hide-btn:hover{background:rgba(255,255,255,.12);color:#fff}
+  .head-arrow{font-size:1.6rem;padding:2px 12px;line-height:1}
   .viewtoggle{display:flex;gap:0;margin:0 0 10px}
   .viewtoggle button{
     flex:1;border:1.5px solid var(--sign-green);background:#fff;color:var(--sign-green);
@@ -225,6 +226,24 @@
     .layer-menu{padding:6px;gap:4px}
     .layer-menu button{font-size:.68rem;padding:6px 8px}
   }
+  .cam-modal{
+    position:fixed;inset:0;z-index:2000;
+    background:rgba(9,20,15,.88);
+    display:flex;flex-direction:column;
+  }
+  .cam-modal[hidden]{display:none}
+  .cam-modal-head{
+    display:flex;justify-content:space-between;align-items:center;gap:12px;
+    padding:12px 16px;color:#fff;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.9rem;
+  }
+  .cam-modal-head a{color:var(--sun);font-size:.78rem;margin-right:14px}
+  .cam-modal-close{
+    background:transparent;border:2px solid rgba(255,255,255,.5);color:#fff;
+    border-radius:8px;font-size:1rem;padding:4px 10px;cursor:pointer;
+  }
+  .cam-modal-close:hover{border-color:#fff}
+  .cam-modal iframe{flex:1;border:0;width:100%;background:#000}
   .cam-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
   .cam-card{display:block;text-decoration:none;color:var(--ink)}
   .cam-imgwrap{position:relative;border-radius:10px;overflow:hidden;background:#E8EDEA}
@@ -564,9 +583,9 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.6</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.7</span></div>
       <div>
-        <button class="hide-btn" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
+        <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
       </div>
     </div>
@@ -615,6 +634,17 @@
     </div>
   </div>
 </aside>
+
+<div class="cam-modal" id="camModal" hidden>
+  <div class="cam-modal-head">
+    <span id="camModalTitle"></span>
+    <span>
+      <a id="camModalExt" href="#" target="_blank" rel="noopener">Open on Windy</a>
+      <button class="cam-modal-close" id="camModalClose" aria-label="Close webcam">✕</button>
+    </span>
+  </div>
+  <iframe id="camFrame" title="Webcam player" allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
+</div>
 
 <aside class="states-panel" id="statesPanel" aria-label="Top US States leaderboards">
   <div class="states-head">
@@ -1752,10 +1782,10 @@ function renderCams(cams){
   }
   const { lat, lon } = state.place;
   let html = `<div class="cam-grid">`;
-  for(const c of cams){
+  cams.forEach((c, i) => {
     const d = haversine(lat, lon, c.lat, c.lon);
     html += `
-      <a class="cam-card" href="${esc(c.page)}" target="_blank" rel="noopener">
+      <a class="cam-card" href="${esc(c.page)}" data-cam="${i}" rel="noopener">
         <div class="cam-imgwrap">
           <img src="${esc(c.img)}" alt="${esc(c.title)}" loading="lazy">
           ${c.live ? '<span class="cam-live">LIVE</span>' : ''}
@@ -1763,10 +1793,31 @@ function renderCams(cams){
         <div class="cam-title">${esc(c.title)}</div>
         <div class="cam-meta">${c.city ? esc(c.city) + ' · ' : ''}${d.toFixed(0)} mi</div>
       </a>`;
-  }
+  });
   html += `</div><div class="sec-note">Webcams via Windy.com</div>`;
   contentEl.innerHTML = html;
+  contentEl.querySelectorAll('.cam-card').forEach(card => {
+    card.addEventListener('click', ev => {
+      const c = (state.cache.cams || [])[+card.dataset.cam];
+      if(!c || !c.player){ card.target = '_blank'; return; }   // no embed — let it open normally
+      ev.preventDefault();
+      openCamModal(c);
+    });
+  });
 }
+function openCamModal(c){
+  $('camModalTitle').textContent = c.title;
+  $('camModalExt').href = c.page || c.player;
+  $('camFrame').src = c.player;
+  $('camModal').hidden = false;
+}
+function closeCamModal(){
+  $('camModal').hidden = true;
+  $('camFrame').src = 'about:blank';       // stop the stream
+}
+$('camModalClose').addEventListener('click', closeCamModal);
+$('camModal').addEventListener('click', ev => { if(ev.target === $('camModal')) closeCamModal(); });
+document.addEventListener('keydown', ev => { if(ev.key === 'Escape' && !$('camModal').hidden) closeCamModal(); });
 
 /* ---------------- saved places ---------------- */
 async function renderSavedTab(){

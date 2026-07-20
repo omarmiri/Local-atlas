@@ -491,7 +491,9 @@ app.get('/api/webcams', async (req, res) => {
       img: w.images?.current?.preview || w.images?.current?.thumbnail || '',
       page: w.urls?.detail || w.urls?.webcam ||
             (w.webcamId ? 'https://www.windy.com/webcams/' + w.webcamId : ''),
-      live: !!(w.player?.live)
+      player: [w.player?.live, w.player?.day, w.player?.month]
+        .find(u => typeof u === 'string' && u.startsWith('http')) || '',
+      live: typeof w.player?.live === 'string' || w.player?.live === true
     })).filter(w => w.img && w.lat != null);
     res.json({ cams });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
