@@ -61,10 +61,10 @@
   }
   .reopen.show{display:block}
   .reopen-right{
-    display:block;left:auto;right:0;top:70px;
-    border-radius:10px 0 0 10px;
+    display:block;left:0;right:auto;top:70px;
+    border-radius:0 10px 10px 0;
     background:var(--sun);color:var(--ink);
-    padding:12px 12px 12px 14px;
+    padding:12px 14px 12px 12px;
   }
   .reopen-right[hidden]{display:none}
   .head-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -510,7 +510,7 @@
     }
     .panel.slid{transform:translateY(110%)}
     .reopen{top:auto;bottom:0;left:0;right:0;border-radius:12px 12px 0 0;text-align:center}
-    .reopen-right{top:auto;bottom:40vh;left:auto;right:0;border-radius:10px 0 0 10px;text-align:left}
+    .reopen-right{top:auto;bottom:126px;left:0;right:auto;width:auto;border-radius:0 10px 10px 0;text-align:left}
     .panel.collapsed{height:118px}
     .panel.collapsed .place-badge,
     .panel.collapsed .tabs,
@@ -533,7 +533,7 @@
 <div class="hint-chip" id="hintChip">Tap anywhere on the map to explore that area</div>
 <button class="alert-banner" id="alertBanner" hidden></button>
 <button class="reopen" id="reopenBtn">◂ Local Atlas</button>
-<button class="reopen reopen-right" id="statesReopen">◂ US Ranks</button>
+<button class="reopen reopen-right" id="statesReopen">US Ranks ▸</button>
 <div class="layerbox">
   <button class="radar-btn" id="layersBtn" aria-expanded="false">◐ Layers</button>
   <span class="radar-time" id="radarTime" hidden></span>
@@ -550,7 +550,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.2</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v2.3</span></div>
       <div>
         <button class="hide-btn" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
