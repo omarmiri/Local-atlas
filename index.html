@@ -472,6 +472,13 @@
   }
 
   /* tabs */
+  .tabgroups{display:flex;gap:4px;padding:8px 10px 0;overflow-x:auto}
+  .tabgroups button{
+    flex:0 0 auto;border:0;cursor:pointer;background:transparent;color:var(--ink-soft);
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:.74rem;
+    letter-spacing:.03em;text-transform:uppercase;padding:6px 12px;border-radius:99px;
+  }
+  .tabgroups button[aria-pressed="true"]{background:var(--sign-green);color:#fff}
   .tabs{
     display:flex;gap:4px;overflow-x:auto;
     padding:12px 16px 0;
@@ -681,7 +688,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.5</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.6</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -707,25 +714,32 @@
     <div class="townstats" id="townStats"></div>
   </div>
 
+  <div class="tabgroups" id="tabGroups" style="display:none">
+    <button data-group="now" aria-pressed="true">Now</button>
+    <button data-group="explore" aria-pressed="false">Explore</button>
+    <button data-group="local" aria-pressed="false">Local</button>
+    <button data-group="about" aria-pressed="false">About</button>
+    <button data-group="saved" aria-pressed="false">Saved</button>
+  </div>
   <div class="tabs" role="tablist" id="tabs" style="display:none">
-    <button class="tab" role="tab" data-tab="weather" aria-selected="true">Weather</button>
-    <button class="tab" role="tab" data-tab="alerts" aria-selected="false">Alerts<span class="cnt" id="alertCnt" style="display:none"></span></button>
-    <button class="tab" role="tab" data-tab="surf" aria-selected="false" id="surfTab" style="display:none">Surf</button>
-    <button class="tab" role="tab" data-tab="news" aria-selected="false">News</button>
-    <button class="tab" role="tab" data-tab="events" aria-selected="false">Events</button>
-    <button class="tab" role="tab" data-tab="services" aria-selected="false">Services</button>
-    <button class="tab" role="tab" data-tab="attractions" aria-selected="false">See &amp; Do</button>
-    <button class="tab" role="tab" data-tab="food" aria-selected="false">Eat</button>
-    <button class="tab" role="tab" data-tab="shopping" aria-selected="false">Shop</button>
-    <button class="tab" role="tab" data-tab="favorites" aria-selected="false">Rec</button>
-    <button class="tab" role="tab" data-tab="kids" aria-selected="false">Kids</button>
-    <button class="tab" role="tab" data-tab="cams" aria-selected="false">Cams</button>
-    <button class="tab" role="tab" data-tab="radio" aria-selected="false">Radio</button>
-    <button class="tab" role="tab" data-tab="social" aria-selected="false">Social</button>
-    <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved</button>
-    <button class="tab" role="tab" data-tab="brief" aria-selected="false">Brief</button>
-    <button class="tab" role="tab" data-tab="laws" aria-selected="false">Laws</button>
-    <button class="tab" role="tab" data-tab="cost" aria-selected="false">Cost</button>
+    <button class="tab" role="tab" data-tab="weather" data-group="now" aria-selected="true">Weather</button>
+    <button class="tab" role="tab" data-tab="alerts" data-group="now" aria-selected="false">Alerts<span class="cnt" id="alertCnt" style="display:none"></span></button>
+    <button class="tab" role="tab" data-tab="surf" data-group="now" aria-selected="false" id="surfTab" style="display:none">Surf</button>
+    <button class="tab" role="tab" data-tab="news" data-group="local" aria-selected="false">News</button>
+    <button class="tab" role="tab" data-tab="events" data-group="local" aria-selected="false">Events</button>
+    <button class="tab" role="tab" data-tab="services" data-group="explore" aria-selected="false">Services</button>
+    <button class="tab" role="tab" data-tab="attractions" data-group="explore" aria-selected="false">See &amp; Do</button>
+    <button class="tab" role="tab" data-tab="food" data-group="explore" aria-selected="false">Eat</button>
+    <button class="tab" role="tab" data-tab="shopping" data-group="explore" aria-selected="false">Shop</button>
+    <button class="tab" role="tab" data-tab="favorites" data-group="explore" aria-selected="false">Rec</button>
+    <button class="tab" role="tab" data-tab="kids" data-group="explore" aria-selected="false">Kids</button>
+    <button class="tab" role="tab" data-tab="cams" data-group="local" aria-selected="false">Cams</button>
+    <button class="tab" role="tab" data-tab="radio" data-group="local" aria-selected="false">Radio</button>
+    <button class="tab" role="tab" data-tab="social" data-group="local" aria-selected="false">Social</button>
+    <button class="tab" role="tab" data-tab="saved" data-group="saved" aria-selected="false">Saved</button>
+    <button class="tab" role="tab" data-tab="brief" data-group="about" aria-selected="false">Brief</button>
+    <button class="tab" role="tab" data-tab="laws" data-group="about" aria-selected="false">Laws</button>
+    <button class="tab" role="tab" data-tab="cost" data-group="about" aria-selected="false">Cost</button>
   </div>
 
   <div class="content" id="content">
@@ -810,6 +824,7 @@ const state = {
   poiSearch: '',        // name filter within the current list
   poiOpenOnly: false,   // only places open right now
   poiSort: 'dist',      // 'dist' | 'rating'
+  tabGroup: 'now',      // active tab group
   favKeys: new Set(),   // normalized keys of saved places
   tab: 'weather',
   cache: {},            // per-place fetched data
@@ -1027,10 +1042,13 @@ async function loadPlace(place, { fly=true } = {}){
     });
   }
   $('tabs').style.display = 'flex';
+  $('tabGroups').style.display = 'flex';
+  applyTabGroup(state.tabGroup || TAB_GROUP_DEFAULT);
   $('alertCnt').style.display = 'none';
   msg('');
 
   $('surfTab').style.display = 'none';
+  $('surfTab').dataset.coastal = 'no';
   state.cache.surf = undefined;
   state.cache.surfSpots = undefined;
   state.cache.cost = undefined;
@@ -1069,6 +1087,23 @@ async function loadPlace(place, { fly=true } = {}){
 document.querySelectorAll('.tab').forEach(t=>{
   t.addEventListener('click', ()=> selectTab(t.dataset.tab));
 });
+const TAB_GROUP_DEFAULT = 'now';
+function applyTabGroup(group){
+  state.tabGroup = group;
+  document.cookie = 'tabgroup=' + group + ';path=/;max-age=' + (365*86400);
+  document.querySelectorAll('#tabGroups button').forEach(b=>
+    b.setAttribute('aria-pressed', String(b.dataset.group === group)));
+  let firstVisible = null;
+  document.querySelectorAll('#tabs .tab').forEach(t=>{
+    const belongs = t.dataset.group === group;
+    const hiddenBySurf = (t.id === 'surfTab' && t.dataset.coastal !== 'yes');
+    const visible = belongs && !hiddenBySurf;
+    t.style.display = visible ? '' : 'none';
+    if(visible && !firstVisible) firstVisible = t.dataset.tab;
+  });
+  const cur = document.querySelector('#tabs .tab[data-tab="'+state.tab+'"]');
+  if(firstVisible && (!cur || cur.dataset.group !== group)) selectTab(firstVisible);
+}
 function selectTab(name, force){
   if(name === state.tab && !force) return;
   state.tab = name;
@@ -1987,7 +2022,8 @@ async function probeSurf(place){
     const h = d?.current?.wave_height;
     if(h != null && state.place === place){
       state.cache.surf = d;
-      $('surfTab').style.display = '';
+      $('surfTab').dataset.coastal = 'yes';
+      if(state.tabGroup === 'now') $('surfTab').style.display = '';
     }
   }catch(e){}
 }
@@ -3061,6 +3097,12 @@ $('reopenBtn').addEventListener('click', showPanel);
 
 /* hide just the location search, keeping tabs and content */
 $('themeToggle').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀' : '◐';
+document.querySelectorAll('#tabGroups button').forEach(b=>
+  b.addEventListener('click', ()=> applyTabGroup(b.dataset.group)));
+(function initTabGroup(){
+  const m = document.cookie.match(/(?:^|; )tabgroup=(\w+)/);
+  state.tabGroup = m ? m[1] : TAB_GROUP_DEFAULT;
+})();
 $('themeToggle').addEventListener('click', ()=>{
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   setTheme(dark ? 'light' : 'dark');
