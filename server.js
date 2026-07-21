@@ -412,6 +412,31 @@ app.get('/api/events', async (req, res) => {
 });
 
 /* ---- county profile (FCC geo → Census ACS; key optional but recommended) ---- */
+app.get('/api/census-debug', async (req, res) => {
+  try{
+    const { lat, lon } = req.query;
+    const out = { steps: {} };
+    const gr = await fetch('https://geocoding.geo.census.gov/geocoder/geographies/coordinates' +
+      `?x=${lon}&y=${lat}&benchmark=Public_AR_Current&vintage=Current_Current` +
+      '&layers=Incorporated%20Places,Counties&format=json');
+    out.steps.geocoderStatus = gr.status;
+    const gj = await gr.json().catch(()=> null);
+    const geos = gj?.result?.geographies || {};
+    out.steps.layerNames = Object.keys(geos);
+    out.steps.places = (geos['Incorporated Places'] || []).map(p => ({ NAME: p.NAME, STATE: p.STATE, PLACE: p.PLACE }));
+    out.steps.counties = (geos['Counties'] || []).map(c => ({ NAME: c.NAME, STATE: c.STATE, COUNTY: c.COUNTY }));
+    const place = (geos['Incorporated Places'] || [])[0];
+    if(place?.PLACE){
+      const key = CENSUS ? '&key=' + CENSUS : '';
+      const url = `https://api.census.gov/data/2023/acs/acs5?get=NAME,B01003_001E&for=place:${place.PLACE}&in=state:${place.STATE}${key}`;
+      const cr = await fetch(url);
+      out.steps.acsStatus = cr.status;
+      out.steps.acsBody = (await cr.text()).slice(0, 300);
+    }
+    res.json(out);
+  }catch(e){ res.status(500).json({ error: String(e.message || e) }); }
+});
+
 app.get('/api/census', async (req, res) => {
   try{
     const { lat, lon } = req.query;
