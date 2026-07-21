@@ -416,19 +416,21 @@ app.get('/api/census', async (req, res) => {
   try{
     const { lat, lon } = req.query;
     if(!lat || !lon) return res.status(400).json({ error: 'bad params' });
-    const out = await cached(`cs4:${(+lat).toFixed(3)},${(+lon).toFixed(3)}`, 30 * 86400e3, async () => {
+    const out = await cached(`cs5:${(+lat).toFixed(3)},${(+lon).toFixed(3)}`, 30 * 86400e3, async () => {
       const key = CENSUS ? '&key=' + CENSUS : '';
       const vars = 'NAME,B01003_001E,B19013_001E,B01002_001E';   // pop, median income, median age
       // Census geocoder → the incorporated city/town containing this point.
       // Only these two layers matter; we deliberately do NOT request sub-place
       // or tract layers, which is what surfaced neighborhoods before.
+      // Incorporated Places covers cities; County Subdivisions covers townships
+      // (NJ/PA/New England/MI), which aren't "places" in Census geography.
       const gr = await fetch('https://geocoding.geo.census.gov/geocoder/geographies/coordinates' +
         `?x=${lon}&y=${lat}&benchmark=Public_AR_Current&vintage=Current_Current` +
-        '&layers=Incorporated%20Places,Counties&format=json');
+        '&layers=Incorporated%20Places,County%20Subdivisions,Counties&format=json');
       if(!gr.ok) throw new Error('Census geocoder HTTP ' + gr.status);
       const geos = (await gr.json())?.result?.geographies || {};
-      // an incorporated place = a real municipality (Detroit, Dearborn…), never a neighborhood
       const place = (geos['Incorporated Places'] || [])[0];
+      const subdiv = (geos['County Subdivisions'] || [])[0];
       const county = (geos['Counties'] || [])[0];
 
       const getRow = async (forClause) => {
@@ -437,21 +439,28 @@ app.get('/api/census', async (req, res) => {
         const j = await cr.json();
         return Array.isArray(j) && j[1] ? j[1] : null;
       };
+      const clean = n => (n||'').replace(/,.*$/, '');
 
+      // 1) incorporated city/town
       if(place?.STATE && place?.PLACE){
         const row = await getRow(`for=place:${place.PLACE}&in=state:${place.STATE}`);
-        // whole municipalities have real populations; a stray sub-place would be tiny/empty
-        if(row && +row[1] > 0){
-          return { area: (row[0]||'').replace(/,.*$/, ''), level: 'town',
+        if(row && +row[1] > 0)
+          return { area: clean(row[0]), level: 'town',
             population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
-        }
       }
+      // 2) township / county subdivision (skip "not defined" subdivisions, code 00000)
+      if(subdiv?.STATE && subdiv?.COUNTY && subdiv?.COUSUB && subdiv.COUSUB !== '00000'){
+        const row = await getRow(`for=county%20subdivision:${subdiv.COUSUB}&in=state:${subdiv.STATE}%20county:${subdiv.COUNTY}`);
+        if(row && +row[1] > 0)
+          return { area: clean(row[0]), level: 'town',
+            population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
+      }
+      // 3) county fallback
       if(county?.STATE && county?.COUNTY){
         const row = await getRow(`for=county:${county.COUNTY}&in=state:${county.STATE}`);
-        if(row){
+        if(row)
           return { area: row[0], level: 'county',
             population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
-        }
       }
       throw new Error('outside US census coverage');
     });
