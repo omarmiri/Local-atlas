@@ -117,6 +117,12 @@
   }
   .chiprow button.scan-deals:hover{filter:brightness(1.15)}
   .filterrow{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;align-items:center}
+  .filterrow.states-chips{
+    flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px;
+  }
+  .filterrow.states-chips::-webkit-scrollbar{display:none}
+  .filterrow.states-chips button{flex:0 0 auto;white-space:nowrap}
   .radlabel{font-family:'Overpass',sans-serif;font-weight:700;font-size:.7rem;
     text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft)}
   .poi-desc img{width:100%;max-height:170px;object-fit:cover;border-radius:8px;margin:2px 0 8px}
@@ -688,7 +694,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.7</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.8</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -2948,7 +2954,8 @@ const statesLayer = L.layerGroup().addTo(map);
 const STATES_CATS = [
   ['weird', '🤪 Weirdest'],
   ['events', '🎟 Most happening'],
-  ['visit', '🌤 Visit this month']
+  ['visit', '🌤 Visit this month'],
+  ['surf', '🏄 Top surf towns']
 ];
 $('statesReopen').addEventListener('click', enterStates);
 let atlasWasExpanded = false;
