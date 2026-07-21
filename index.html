@@ -640,18 +640,21 @@
 
   /* mobile: bottom sheet */
   @media (max-width:640px){
-    #map{bottom:50vh}                       /* split screen: map on top, panel below */
+    #map{bottom:var(--sheet-h,50vh)}        /* split screen: map above, panel below */
     body.panel-away #map{bottom:0}          /* panel hidden — map takes the full screen */
     body.panel-mini #map{bottom:118px}      /* panel collapsed to a slim bar */
     .panel{
       top:auto;left:0;right:0;bottom:0;width:100%;
-      height:50vh;border-radius:18px 18px 0 0;
+      height:var(--sheet-h,50vh);border-radius:18px 18px 0 0;
       transition:height .25s ease, transform .3s ease;
     }
+    body.sheet-dragging .panel,
+    body.sheet-dragging #map{transition:none}   /* live-follow the finger */
+    .reopen-right{bottom:var(--sheet-h,50vh)}
     .panel.slid{transform:translateY(110%)}
     .reopen{top:auto;bottom:0;left:0;right:0;width:100%;border-radius:0;text-align:center}
     .leaflet-bottom.leaflet-right{margin-bottom:96px}
-    .reopen-right{top:auto;bottom:50vh;left:0;right:0;width:100%;border-radius:12px 12px 0 0;text-align:center}
+    .reopen-right{top:auto;left:0;right:0;width:100%;border-radius:12px 12px 0 0;text-align:center}
     body.panel-away .reopen-right{bottom:44px}
     body.panel-mini .reopen-right{bottom:118px}
     .panel.collapsed{height:118px}
@@ -694,7 +697,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.8</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.9</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -3133,11 +3136,66 @@ $('headToggle').addEventListener('click', ()=>{
 });
 
 /* ---------------- mobile sheet toggle ---------------- */
-$('sheetToggle').addEventListener('click', ()=>{
-  const mini = $('panel').classList.toggle('collapsed');
-  document.body.classList.toggle('panel-mini', mini);
-  refreshMapSize();
-});
+(function initSheetDrag(){
+  const handle = $('sheetToggle'), panel = $('panel'), body = document.body;
+  const SNAPS = [0.30, 0.55, 0.92];          // peek / half / tall (fraction of viewport)
+  let startY = 0, startH = 0, dragging = false, moved = false;
+  const vh = () => window.innerHeight;
+  const setH = px => document.documentElement.style.setProperty('--sheet-h', px + 'px');
+  const curFrac = () => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--sheet-h').trim();
+    if(v.endsWith('px')) return parseFloat(v) / vh();
+    return 0.55;
+  };
+  const snapTo = frac => {
+    const nearest = SNAPS.reduce((a, b) => Math.abs(b - frac) < Math.abs(a - frac) ? b : a);
+    if(nearest <= SNAPS[0] + 0.02){            // snapped to peek → use the mini bar
+      panel.classList.add('collapsed'); body.classList.add('panel-mini');
+      document.documentElement.style.removeProperty('--sheet-h');
+    }else{
+      panel.classList.remove('collapsed'); body.classList.remove('panel-mini');
+      setH(Math.round(nearest * vh()));
+    }
+    refreshMapSize();
+  };
+  const onDown = e => {
+    if(!window.matchMedia('(max-width:640px)').matches) return;
+    dragging = true; moved = false;
+    startY = (e.touches ? e.touches[0].clientY : e.clientY);
+    startH = panel.classList.contains('collapsed') ? 118 : panel.getBoundingClientRect().height;
+    body.classList.add('sheet-dragging');
+  };
+  const onMove = e => {
+    if(!dragging) return;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY);
+    const dy = startY - y;
+    if(Math.abs(dy) > 4) moved = true;
+    let h = Math.max(80, Math.min(vh() * 0.95, startH + dy));
+    panel.classList.remove('collapsed'); body.classList.remove('panel-mini');
+    setH(Math.round(h));
+    if(e.cancelable) e.preventDefault();
+  };
+  const onUp = () => {
+    if(!dragging) return;
+    dragging = false;
+    body.classList.remove('sheet-dragging');
+    if(!moved){                                // treat as a tap: toggle mini
+      const mini = panel.classList.toggle('collapsed');
+      body.classList.toggle('panel-mini', mini);
+      if(!mini) document.documentElement.style.setProperty('--sheet-h', Math.round(0.55*vh())+'px');
+      else document.documentElement.style.removeProperty('--sheet-h');
+      refreshMapSize();
+    }else{
+      snapTo(curFrac());
+    }
+  };
+  handle.addEventListener('touchstart', onDown, {passive:true});
+  handle.addEventListener('touchmove', onMove, {passive:false});
+  handle.addEventListener('touchend', onUp);
+  handle.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+})();
 
 /* ---------------- boot: URL hash first, then last saved place ---------------- */
 if('serviceWorker' in navigator && location.protocol === 'https:'){
