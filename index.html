@@ -311,6 +311,10 @@
   .mini-info{min-width:0;padding-right:4px}
   .mini-name{font-family:'Overpass',sans-serif;font-weight:700;font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
   .mini-sub{font-size:.68rem;color:#CFE3D9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+  .law-row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;
+    padding:10px 0;border-bottom:1px solid var(--line)}
+  .law-row:last-child{border-bottom:none}
+  .law-txt{font-size:.86rem;line-height:1.5}
   .cam-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
   .cam-card{display:block;text-decoration:none;color:var(--ink)}
   .cam-imgwrap{position:relative;border-radius:10px;overflow:hidden;background:#E8EDEA}
@@ -651,7 +655,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.6</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.7</span></div>
       <div>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -693,6 +697,7 @@
     <button class="tab" role="tab" data-tab="social" aria-selected="false">Social</button>
     <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved</button>
     <button class="tab" role="tab" data-tab="brief" aria-selected="false">Brief</button>
+    <button class="tab" role="tab" data-tab="laws" aria-selected="false">Laws</button>
   </div>
 
   <div class="content" id="content">
@@ -1088,6 +1093,11 @@ async function renderTab(name){
       const c = await getCams();
       if(token!==state.reqToken || state.tab!=='cams') return;
       renderCams(c);
+    }else if(name==='laws'){
+      showLoading('Digging up quirky local laws…');
+      const lw = await getLaws();
+      if(token!==state.reqToken || state.tab!=='laws') return;
+      renderLaws(lw);
     }else if(name==='saved'){
       await renderSavedTab();
     }else{
@@ -2221,6 +2231,46 @@ function closeCamModal(){
 $('camModalClose').addEventListener('click', closeCamModal);
 $('camModal').addEventListener('click', ev => { if(ev.target === $('camModal')) closeCamModal(); });
 document.addEventListener('keydown', ev => { if(ev.key === 'Escape' && !$('camModal').hidden) closeCamModal(); });
+
+/* ---------------- quirky laws (state + town, permanently cached server-side) ---------------- */
+async function getLaws(){
+  if(state.cache.laws) return state.cache.laws;
+  const be = await state.backendP;
+  if(!be.ai){ state.cache.laws = null; return null; }
+  const parts = state.place.name.split(',').map(x=>x.trim());
+  const town = parts[0];
+  const st = parts[1] || '';
+  const region = REGION_ABBR[st] || st;
+  const [stateLaws, townLaws] = await Promise.all([
+    region ? fetchT(`/api/laws?scope=state&place=${encodeURIComponent(region)}`, {}, 30000)
+              .then(r=>r.ok?r.json():{laws:[]}).then(j=>j.laws||[]).catch(()=>[]) : Promise.resolve([]),
+    fetchT(`/api/laws?scope=town&place=${encodeURIComponent(town)}&region=${encodeURIComponent(region)}`, {}, 30000)
+      .then(r=>r.ok?r.json():{laws:[]}).then(j=>j.laws||[]).catch(()=>[])
+  ]);
+  state.cache.laws = { town, region, stateLaws, townLaws };
+  return state.cache.laws;
+}
+function lawRows(list){
+  return list.map(l=>{
+    const st = (l.status||'').toLowerCase();
+    const cls = st.includes('disputed') ? 'closed' : st.includes('historical') ? '' : 'open';
+    return `<div class="law-row"><div class="law-txt">${esc(l.law)}</div>` +
+      (l.status?`<span class="openbadge ${cls}">${esc(l.status)}</span>`:'') + `</div>`;
+  }).join('');
+}
+function renderLaws(d){
+  if(d === null){ contentEl.innerHTML = `<div class="empty-state"><p>Local law trivia isn't available right now.</p></div>`; return; }
+  let html = '';
+  if(d.townLaws?.length){
+    html += `<div class="sec-note">Quirky laws said to be local to ${esc(d.town)}</div>${lawRows(d.townLaws)}`;
+  }
+  if(d.stateLaws?.length){
+    html += `<div class="sec-note" style="margin-top:14px">Across ${esc(d.region||'the state')}</div>${lawRows(d.stateLaws)}`;
+  }
+  if(!html){ contentEl.innerHTML = `<div class="empty-state"><p>No quirky laws surfaced for this spot.</p></div>`; return; }
+  html += `<div class="sec-note" style="margin-top:12px">Folklore, not legal advice — many are historical, unenforced, or apocryphal.</div>`;
+  contentEl.innerHTML = html;
+}
 
 /* ---------------- saved places ---------------- */
 async function renderSavedTab(){

@@ -361,6 +361,30 @@ app.get('/api/states/visit', async (req, res) => {
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
+/* ---- Quirky laws (Gemini, cached permanently per location) ---- */
+async function lawsFor(scope, place, region){
+  // long TTL: folklore doesn't change. Redis makes this a one-time cost per place.
+  const key = 'laws:' + scope + ':' + place.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return cached(key, 365 * 86400e3, async () => {
+    const where = scope === 'state' ? `the US state of ${place}` : `${place}${region ? ', ' + region : ''}`;
+    const ranked = await geminiJSON(
+`List 5-7 quirky, unusual, funny, or surprising laws or ordinances associated with ${where}. Prefer genuinely local specifics over generic ones. For each, give a one-line plain description. Many such laws are historical, rarely enforced, or possibly apocryphal — reflect that honestly in a "status" field. Respond ONLY with a JSON array:
+[{"law":"short description of the law","status":"one of: on the books, historical, rarely enforced, or disputed"}]`, 1100);
+    return Array.isArray(ranked) ? ranked.slice(0, 7) : [];
+  });
+}
+app.get('/api/laws', async (req, res) => {
+  try{
+    if(!AI) return res.status(503).json({ error: 'not configured' });
+    const scope = req.query.scope === 'town' ? 'town' : 'state';
+    const place = String(req.query.place || '').slice(0, 80);
+    const region = String(req.query.region || '').slice(0, 40);
+    if(!place) return res.status(400).json({ error: 'place required' });
+    const laws = await lawsFor(scope, place, region);
+    res.json({ laws });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
 /* ---- Ticketmaster events ---- */
 app.get('/api/events', async (req, res) => {
   try{
@@ -643,5 +667,8 @@ if(SELF){
     .forEach((ep, i) => setTimeout(() => fetch(SELF + ep).catch(()=>{}), i * 30e3));
   setTimeout(warm, 30e3);                 // warm shortly after boot
   setInterval(warm, 6 * 3600e3);          // and keep the daily caches fresh
+  // one-time pre-warm of all 50 state law sets (cached ~forever via Redis)
+  if(AI) STATES.forEach(([name], i) =>
+    setTimeout(() => fetch(SELF + '/api/laws?scope=state&place=' + encodeURIComponent(name)).catch(()=>{}), 120e3 + i * 4000));
 }
 app.listen(PORT, () => console.log('local-atlas listening on :' + PORT));
