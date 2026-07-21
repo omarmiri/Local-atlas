@@ -341,6 +341,40 @@ ${JSON.stringify(compact)}`, 1400);
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
+/* Top surf towns: curated US/Canada surf spots, scored live on current waves */
+const SURF_TOWNS = [
+  ['Huntington Beach, CA', 33.66, -118.00], ['Santa Cruz, CA', 36.96, -122.02],
+  ['Malibu, CA', 34.03, -118.68], ['San Diego, CA', 32.72, -117.26],
+  ['Ventura, CA', 34.27, -119.29], ['Oceanside, CA', 33.19, -117.38],
+  ['Cocoa Beach, FL', 28.32, -80.61], ['Jacksonville Beach, FL', 30.29, -81.39],
+  ['Kill Devil Hills, NC', 36.03, -75.68], ['Wrightsville Beach, NC', 34.21, -77.80],
+  ['Montauk, NY', 41.04, -71.95], ['Ocean City, NJ', 39.28, -74.57],
+  ['Virginia Beach, VA', 36.85, -75.98], ['Folly Beach, SC', 32.65, -79.94],
+  ['Galveston, TX', 29.28, -94.79], ['Pacific City, OR', 45.20, -123.96],
+  ['Newport, RI', 41.49, -71.31], ['Honolulu, HI', 21.28, -157.83],
+  ['Hilo, HI', 19.73, -155.09], ['Tofino, BC', 49.15, -125.91]
+];
+app.get('/api/states/surf', async (req, res) => {
+  try{
+    const data = await cached('st:surf', 3 * 3600e3, async () => {
+      const rows = await mapLimit(SURF_TOWNS, 4, async ([name, lat, lon]) => {
+        try{
+          const u = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}` +
+            `&current=wave_height,wave_period,swell_wave_height&daily=wave_height_max&timezone=auto&forecast_days=3&length_unit=imperial`;
+          const d = await (await fetch(u)).json();
+          const c = d.current || {};
+          const wave = c.wave_height || 0, period = c.wave_period || 0, swell = c.swell_wave_height || 0;
+          // simple surf score: wave height + swell quality + period (cleaner longer-period swell rates higher)
+          const score = wave * 3 + swell * 2 + period * 0.5;
+          return { town: name, lat, lon, wave, period, swell, score: Math.round(score * 10) / 10 };
+        }catch(e){ return { town: name, lat, lon, wave: 0, period: 0, swell: 0, score: 0 }; }
+      });
+      return rows.filter(r => r.wave > 0).sort((a, b) => b.score - a.score).slice(0, 12);
+    });
+    res.json({ items: data });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
 /* Best to visit this month: AI seasonal picks */
 app.get('/api/states/visit', async (req, res) => {
   try{

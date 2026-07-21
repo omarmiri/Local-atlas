@@ -131,7 +131,7 @@
   .filterrow button[aria-pressed="true"]{border-color:var(--sign-green);background:var(--sign-green);color:#fff}
   .deal-snip{
     font-size:.8rem;line-height:1.5;color:var(--ink);
-    border-left:3px solid var(--sun);background:#FFFBEE;
+    border-left:3px solid var(--sun);background:var(--surface-2);
     padding:7px 10px;margin:6px 0;border-radius:0 8px 8px 0;
   }
   .deal-snip span{
@@ -553,7 +553,7 @@
     background:#FDF3F1;border-radius:0 10px 10px 0;
     padding:11px 12px;margin-bottom:10px;
   }
-  .alert-card.moderate{border-left-color:var(--sun);background:#FFFAEB}
+  .alert-card.moderate{border-left-color:var(--sun);background:var(--surface-2)}
   .alert-card h3{font-family:'Overpass',sans-serif;font-size:.9rem;font-weight:800}
   .alert-card .meta{font-family:'IBM Plex Mono',monospace;font-size:.66rem;color:var(--ink-soft);margin:4px 0 6px}
   .alert-card p{font-size:.82rem;line-height:1.5;color:#3b2f2c}
@@ -688,7 +688,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.6</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.7</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -3018,7 +3018,7 @@ function renderStates(cat, items){
   }
 
   items.forEach((it, i) => {
-    const stateName = it.state || '';
+    const stateName = it.state || it.town || '';
     let metric = '', sub = '';
     if(cat === 'weird'){
       metric = 'weirdness ' + (typeof it.score === 'number' ? it.score.toFixed(1) : it.score);
@@ -3035,6 +3035,9 @@ function renderStates(cat, items){
       sub = (it.festival ? `<div class="kind" style="margin-top:3px">\ud83c\udfaa ${esc(it.festival)}</div>` : '')
           + (it.top ? `<div class="kind" style="margin-top:3px">Biggest draw: ${esc(it.top)}</div>` : '')
           + (it.note ? `<div class="kind" style="margin-top:3px">${esc(it.note)}</div>` : '');
+    }else if(cat === 'surf'){
+      metric = it.wave ? it.wave.toFixed(1) + ' ft \u00b7 ' + Math.round(it.period) + 's' : '';
+      sub = `<div class="kind" style="margin-top:3px">Swell ${(it.swell||0).toFixed(1)} ft \u00b7 tap to explore this town</div>`;
     }else{
       const slug = stateName.toLowerCase().replace(/\s+/g, '-');
       const links = [];
@@ -3044,8 +3047,9 @@ function renderStates(cat, items){
       sub = (it.why ? `<div class="kind" style="margin-top:3px">${esc(it.why)}</div>` : '')
           + `<div class="chiprow" style="margin-top:6px">${links.join('')}</div>`;
     }
+    const rowAttr = cat === 'surf' ? ` data-surf-lat="${it.lat}" data-surf-lon="${it.lon}" data-surf-name="${esc(it.town||'')}" style="cursor:pointer"` : '';
     html += `
-      <div class="state-row">
+      <div class="state-row"${rowAttr}>
         <div class="rank">#${i + 1}</div>
         <div style="flex:1;min-width:0">
           <div class="nm">${esc(stateName)}${metric ? ` <span class="metric">${esc(metric)}</span>` : ''}</div>
@@ -3066,6 +3070,14 @@ function renderStates(cat, items){
   });
   $('statesContent').innerHTML = html;
   wireStateChips();
+  if(cat === 'surf'){
+    $('statesContent').querySelectorAll('.state-row[data-surf-lat]').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        exitStates();
+        loadPlace({ lat:+row.dataset.surfLat, lon:+row.dataset.surfLon, name:row.dataset.surfName, country:'US' });
+      });
+    });
+  }
 }
 
 /* ---------------- panel show/hide ---------------- *//* ---------------- panel show/hide ---------------- */
