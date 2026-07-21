@@ -646,7 +646,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.2</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.3</span></div>
       <div>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -979,6 +979,7 @@ async function loadPlace(place, { fly=true } = {}){
 
   $('surfTab').style.display = 'none';
   state.cache.surf = undefined;
+  state.cache.surfSpots = undefined;
   probeSurf(place);
   if(hereMarker) hereMarker.remove();
   hereMarker = L.marker([place.lat, place.lon], { icon:hereIcon, zIndexOffset:1000 })
@@ -1880,6 +1881,48 @@ async function getSurf(){
   state.cache.surf = d;
   return d;
 }
+async function getSurfSpots(){
+  if(state.cache.surfSpots) return state.cache.surfSpots;
+  const { lat, lon } = state.place;
+  // natural=beach + sport=surfing spots, plus surf shops / board rental
+  const body = `[out:json][timeout:25];(
+    nwr["natural"="beach"](around:40000,${lat},${lon});
+    nwr["sport"="surfing"](around:40000,${lat},${lon});
+    nwr["shop"="surf"](around:40000,${lat},${lon});
+    nwr["shop"="water_sports"](around:40000,${lat},${lon});
+    nwr["rental"~"surf|board|watersports"](around:40000,${lat},${lon});
+  );out center 80;`;
+  let spots = [], shops = [];
+  try{
+    const d = await overpassQuery(body);
+    for(const e of (d.elements||[])){
+      const t = e.tags || {};
+      const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon;
+      if(la == null) continue;
+      const name = t.name;
+      const dist = haversine(lat, lon, la, lo);
+      const rental = t.shop === 'surf' || t.shop === 'water_sports' ||
+                     /surf|board|watersports/i.test(t.rental || '') ||
+                     t['service:bicycle:rental'] === 'yes';
+      if(rental && name){
+        shops.push({ name, lat:la, lon:lo, dist,
+          kind: t.shop === 'surf' ? 'surf shop' : t.shop === 'water_sports' ? 'water sports' : 'board rental',
+          website: t.website || t['contact:website'] || '', phone: t.phone || t['contact:phone'] || '' });
+      }else if(t.sport === 'surfing' || (t.natural === 'beach' && name)){
+        spots.push({ name: name || 'Surf break', lat:la, lon:lo, dist,
+          named: !!name, surfTagged: t.sport === 'surfing' });
+      }
+    }
+  }catch(e){}
+  // named + surf-tagged first, then by distance; cap
+  spots.sort((a,b)=> (b.surfTagged - a.surfTagged) || (b.named - a.named) || (a.dist - b.dist));
+  shops.sort((a,b)=> a.dist - b.dist);
+  const seen = new Set();
+  spots = spots.filter(s=>{ if(seen.has(s.name)) return false; seen.add(s.name); return true; }).slice(0,15);
+  const out = { spots, shops: shops.slice(0,12) };
+  state.cache.surfSpots = out;
+  return out;
+}
 const compass = deg => ['N','NE','E','SE','S','SW','W','NW'][Math.round(((deg||0)%360)/45)%8];
 function renderSurf(d){
   const c = d?.current;
@@ -1909,8 +1952,60 @@ function renderSurf(d){
         </div>`;
     }
   }
-  html += `<div class="sec-note">Marine forecast: Open-Meteo</div>`;
+  html += `<div class="sec-note">Marine forecast: Open-Meteo</div>
+    <div id="surfSpots"></div>`;
   contentEl.innerHTML = html;
+  loadSurfSpotsInto();
+}
+async function loadSurfSpotsInto(){
+  const box = $('surfSpots');
+  if(!box) return;
+  box.innerHTML = `<div class="loading" style="padding:8px 0"><div class="spinner"></div>Finding surf spots &amp; rentals nearby…</div>`;
+  const { spots, shops } = await getSurfSpots();
+  poiLayer.clearLayers();
+  const { lat, lon } = state.place;
+  let h = '';
+  if(spots.length){
+    h += `<div class="sec-note" style="margin-top:14px">Surf spots &amp; beaches nearby</div>`;
+    spots.forEach(sp=>{
+      const dir = `https://www.google.com/maps/dir/?api=1&destination=${sp.lat},${sp.lon}`;
+      const gm = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(sp.name)}%20${sp.lat},${sp.lon}`;
+      h += `
+        <div class="poi" style="border-bottom:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:11px 0">
+            <div><div class="nm">${esc(sp.name)}${sp.surfTagged?' <span class="openbadge open">Surf</span>':''}</div>
+              <div class="chiprow" style="margin-top:6px">
+                <a href="${dir}" target="_blank" rel="noopener">Directions</a>
+                <a href="${gm}" target="_blank" rel="noopener">Google Maps</a>
+              </div></div>
+            <div class="dist">${sp.dist.toFixed(1)} mi</div>
+          </div>
+        </div>`;
+      L.marker([sp.lat, sp.lon], { icon: L.divIcon({ className:'town-pin', iconSize:[12,12] }) })
+        .addTo(poiLayer).bindPopup(`<strong>${esc(sp.name)}</strong><br><a href="${dir}" target="_blank" rel="noopener">Directions</a>`);
+    });
+  }
+  if(shops.length){
+    h += `<div class="sec-note" style="margin-top:14px">Board rentals &amp; surf shops</div>`;
+    shops.forEach(sh=>{
+      const dir = `https://www.google.com/maps/dir/?api=1&destination=${sh.lat},${sh.lon}`;
+      h += `
+        <div class="poi" style="border-bottom:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:11px 0">
+            <div><div class="nm">${esc(sh.name)}</div><div class="kind">${esc(sh.kind)}</div>
+              <div class="chiprow" style="margin-top:6px">
+                <a href="${dir}" target="_blank" rel="noopener">Directions</a>
+                ${sh.website?`<a href="${esc(sh.website)}" target="_blank" rel="noopener">Website</a>`:''}
+              </div></div>
+            <div class="dist">${sh.dist.toFixed(1)} mi</div>
+          </div>
+        </div>`;
+      L.circleMarker([sh.lat, sh.lon], { radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9 })
+        .addTo(poiLayer).bindPopup(`<strong>${esc(sh.name)}</strong><br>${esc(sh.kind)} · <a href="${dir}" target="_blank" rel="noopener">Directions</a>`);
+    });
+  }
+  if(!spots.length && !shops.length) h = `<div class="sec-note" style="margin-top:12px">No mapped surf spots or rentals within ~25 miles.</div>`;
+  box.innerHTML = h;
 }
 
 /* ---------------- local radio (Radio Browser, keyless) ---------------- */
