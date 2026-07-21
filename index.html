@@ -646,7 +646,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.3</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.4</span></div>
       <div>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -681,6 +681,7 @@
     <button class="tab" role="tab" data-tab="attractions" aria-selected="false">See &amp; Do</button>
     <button class="tab" role="tab" data-tab="food" aria-selected="false">Eat</button>
     <button class="tab" role="tab" data-tab="shopping" aria-selected="false">Shop</button>
+    <button class="tab" role="tab" data-tab="favorites" aria-selected="false">Rec</button>
     <button class="tab" role="tab" data-tab="kids" aria-selected="false">Kids</button>
     <button class="tab" role="tab" data-tab="cams" aria-selected="false">Cams</button>
     <button class="tab" role="tab" data-tab="radio" aria-selected="false">Radio</button>
@@ -1074,7 +1075,7 @@ async function renderTab(name){
     }else if(name==='saved'){
       await renderSavedTab();
     }else{
-      const labels = { services:'public services', attractions:'things to see', food:'places to eat', kids:'kids activities', shopping:'stores nearby' };
+      const labels = { services:'public services', attractions:'things to see', food:'places to eat', kids:'kids activities', shopping:'stores nearby', favorites:'golf, trails, theaters & rec' };
       state.poiFilter = null; state.poiSearch = ''; state.poiOpenOnly = false;
       showLoading('Finding '+labels[name]+' nearby…');
       const pois = await getPOIs(name, token);
@@ -1229,12 +1230,14 @@ const CAT_LEISURE_KIDS     = new Set(['playground','water_park','amusement_arcad
 const CAT_TOURISM_KIDS     = new Set(['zoo','theme_park','aquarium']);
 const CAT_AMENITY_KIDS     = new Set(['cinema','library']);
 const CAT_SHOP_BIGBOX = new Set(['department_store','supermarket','wholesale','doityourself','variety_store']);
+const CAT_LEISURE_FAV = new Set(['golf_course','fishing','stadium','sports_centre','fitness_centre',
+  'bowling_alley','ice_rink','dog_park','nature_reserve','marina','beach_resort','horse_riding','escape_game']);
 const CAT_SHOP = new Set(['mall','department_store','supermarket','wholesale','doityourself','variety_store',
   'hardware','electronics','furniture','clothes','shoes','sports','toys','books','jewelry','gift',
   'garden_centre','pet','second_hand','charity','outdoor','mobile_phone','convenience','music','stationery']);
 function buildCombinedQuery(lat, lon, r){
-  const AM = [...new Set([...CAT_AMENITY_SERVICES, ...CAT_AMENITY_FOOD, ...CAT_AMENITY_KIDS])].join('|');
-  const LE = [...CAT_LEISURE_KIDS, 'park'].join('|');
+  const AM = [...new Set([...CAT_AMENITY_SERVICES, ...CAT_AMENITY_FOOD, ...CAT_AMENITY_KIDS, 'cinema','theatre','nightclub'])].join('|');
+  const LE = [...new Set([...CAT_LEISURE_KIDS, ...CAT_LEISURE_FAV, 'park'])].join('|');
   const TO = [...CAT_TOURISM_ATTR].join('|');
   const SH = [...CAT_SHOP].join('|');
   // separate out-statements give each group its own result cap, so one huge
@@ -1243,7 +1246,11 @@ function buildCombinedQuery(lat, lon, r){
     (nwr["amenity"~"^(${AM})$"](around:${r},${lat},${lon}););out center 300;
     (nwr["tourism"~"^(${TO})$"](around:${r},${lat},${lon});
      nwr["leisure"~"^(${LE})$"](around:${r},${lat},${lon}););out center 200;
-    (nwr["shop"~"^(${SH})$"](around:${r},${lat},${lon}););out center 300;`;
+    (nwr["shop"~"^(${SH})$"](around:${r},${lat},${lon}););out center 300;
+    (nwr["amenity"~"^(cinema|theatre|nightclub)$"](around:${r},${lat},${lon});
+     nwr["leisure"~"^(${[...CAT_LEISURE_FAV].join('|')})$"](around:${r},${lat},${lon});
+     nwr["route"="hiking"](around:${r},${lat},${lon});
+     way["highway"="path"]["name"](around:${r},${lat},${lon}););out center 250;`;
 }
 function categoriesOf(t){
   const cats = [];
@@ -1261,6 +1268,9 @@ function categoriesOf(t){
     if(CAT_LEISURE_KIDS.has(t.leisure)) cats.push('kids');
   }
   if(t.shop && CAT_SHOP.has(t.shop)) cats.push('shopping');
+  if(t.leisure && CAT_LEISURE_FAV.has(t.leisure)) cats.push('favorites');
+  if(t.amenity === 'cinema' || t.amenity === 'theatre' || t.amenity === 'nightclub') cats.push('favorites');
+  if(t.route === 'hiking' || (t.highway === 'path' && t.name)) cats.push('favorites');
   return cats;
 }
 /* Overpass is a shared free service: single instances rate-limit quickly,
@@ -1294,8 +1304,8 @@ function overpassQuery(body){
 
 function bucketize(elements){
   const { lat, lon } = state.place;
-  const buckets = { services:[], attractions:[], food:[], kids:[], shopping:[] };
-  const seen = { services:new Set(), attractions:new Set(), food:new Set(), kids:new Set(), shopping:new Set() };
+  const buckets = { services:[], attractions:[], food:[], kids:[], shopping:[], favorites:[] };
+  const seen = { services:new Set(), attractions:new Set(), food:new Set(), kids:new Set(), shopping:new Set(), favorites:new Set() };
   const items = [];
   for(const e of (elements||[])){
     const t = e.tags || {};
@@ -1306,6 +1316,7 @@ function bucketize(elements){
     let name = t.name;
     if(!name){
       if(t.leisure === 'playground'){ name = 'Playground'; cats = ['kids']; }
+      else if(t.leisure === 'fishing'){ name = 'Fishing spot'; }
       else continue;
     }
     let kindLabel = (t.amenity || t.tourism || t.leisure || '').replaceAll('_',' ');
@@ -1314,6 +1325,14 @@ function bucketize(elements){
                 : CAT_SHOP_BIGBOX.has(t.shop) ? 'big box'
                 : t.shop.replaceAll('_',' ');
     }
+    if(t.route === 'hiking' || (t.highway === 'path')) kindLabel = 'trail';
+    else if(t.leisure === 'golf_course') kindLabel = 'golf';
+    else if(t.leisure === 'fishing') kindLabel = 'fishing';
+    else if(t.leisure === 'nature_reserve') kindLabel = 'nature';
+    else if(t.leisure === 'sports_centre' || t.leisure === 'fitness_centre') kindLabel = 'sports';
+    else if(t.amenity === 'cinema') kindLabel = 'movie theater';
+    else if(t.amenity === 'theatre') kindLabel = 'theater';
+    else if(t.leisure === 'escape_game') kindLabel = 'escape room';
     items.push({ cats, item:{ name, kind:kindLabel, lat:la, lon:lo, dist:haversine(lat,lon,la,lo),
       website: t.website || t['contact:website'] || '',
       hours:   t.opening_hours || '',
@@ -1338,7 +1357,7 @@ function getAllPOIs(){
   const { lat, lon } = state.place;
   const promise = (async ()=>{
     // warm local cache: same spot + radius within 24 h loads instantly
-    const lsKey = `poiv5:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
+    const lsKey = `poiv6:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
     try{
       const c = JSON.parse(localStorage.getItem(lsKey) || 'null');
       if(c && Date.now() - c.t < 864e5) return c.b;
@@ -1377,7 +1396,7 @@ async function fetchFSQBuckets(lat, lon, r){
 }
 const normName = n => n.toLowerCase().replace(/[^a-z0-9]/g,'');
 function mergeBuckets(osmB, fsqB){
-  const cats = ['services','attractions','food','kids','shopping'];
+  const cats = ['services','attractions','food','kids','shopping','favorites'];
   const b = {};
   for(const c of cats){
     const merged = [...(osmB?.[c]||[])];
@@ -1483,7 +1502,7 @@ function drawPOIs(kind){
       Try a larger town nearby, or a different category.</p></div>`;
     return;
   }
-  const filterable = (kind==='attractions' || kind==='kids' || kind==='shopping');
+  const filterable = (kind==='attractions' || kind==='kids' || kind==='shopping' || kind==='favorites');
   let items = all;
   if(filterable && state.poiFilter) items = items.filter(i=>i.kind===state.poiFilter);
   if(state.poiSearch){
