@@ -661,18 +661,18 @@
     .panel.collapsed .place-badge,
     .panel.collapsed .tabs,
     .panel.collapsed .content{display:none}
-    .sheet-toggle{
-      display:block;width:100%;background:var(--sign-green);border:0;cursor:grab;
-      padding:14px 0 12px;touch-action:none;position:relative;z-index:5;
+    .sheet-grip{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      width:100%;background:var(--sign-green);cursor:grab;
+      padding:16px 0 14px;touch-action:none;position:relative;z-index:6;
+      user-select:none;-webkit-user-select:none;
     }
-    .sheet-toggle:active{cursor:grabbing}
-    .sheet-toggle::before{
-      content:"";display:block;width:52px;height:5px;border-radius:3px;
-      background:rgba(255,255,255,.7);margin:0 auto;
-    }
+    .sheet-grip:active{cursor:grabbing}
+    .grip-bar{display:block;width:56px;height:6px;border-radius:3px;background:rgba(255,255,255,.75)}
+    .grip-dbg{position:absolute;right:10px;top:4px;font-size:.6rem;color:rgba(255,255,255,.6);font-family:monospace}
     .hint-chip{top:12px;right:12px;left:12px;text-align:center}
   }
-  .sheet-toggle{display:none}
+  .sheet-grip{display:none}
 </style>
 </head>
 <body>
@@ -696,10 +696,13 @@
 </div>
 
 <aside class="panel" id="panel">
-  <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
+  <div class="sheet-grip" id="sheetToggle" role="button" aria-label="Drag to resize, tap to collapse">
+    <span class="grip-bar"></span>
+    <span class="grip-dbg" id="gripDbg"></span>
+  </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v5.0</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v5.1</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -3141,7 +3144,8 @@ $('headToggle').addEventListener('click', ()=>{
 (function initSheetDrag(){
   const handle = $('sheetToggle'), panel = $('panel'), body = document.body;
   const SNAPS = [0.30, 0.55, 0.92];          // peek / half / tall (fraction of viewport)
-  let startY = 0, startH = 0, dragging = false, moved = false;
+  let startY = 0, startH = 0, dragging = false, moved = false, dbgN = 0;
+  const dbg = m => { const el = document.getElementById('gripDbg'); if(el) el.textContent = m; };
   const vh = () => window.innerHeight;
   const setH = px => document.documentElement.style.setProperty('--sheet-h', px + 'px');
   const curFrac = () => {
@@ -3161,6 +3165,7 @@ $('headToggle').addEventListener('click', ()=>{
     refreshMapSize();
   };
   const onDown = e => {
+    dbg('down ' + (++dbgN));
     if(!window.matchMedia('(max-width:640px)').matches) return;
     dragging = true; moved = false;
     startY = (e.touches ? e.touches[0].clientY : e.clientY);
@@ -3175,6 +3180,7 @@ $('headToggle').addEventListener('click', ()=>{
     let h = Math.max(80, Math.min(vh() * 0.95, startH + dy));
     panel.classList.remove('collapsed'); body.classList.remove('panel-mini');
     setH(Math.round(h));
+    dbg('h ' + Math.round(h));
     if(e.cancelable) e.preventDefault();
   };
   const onUp = () => {
