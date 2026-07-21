@@ -280,6 +280,33 @@
     .cam-shell{width:100%;height:100%;border-radius:0;border:0}
     .cam-brand{display:none}
   }
+  .surf-row{display:flex;align-items:center;gap:10px;padding:6px 0}
+  .surf-day{flex:0 0 42px;font-family:'Overpass',sans-serif;font-weight:700;font-size:.78rem;color:var(--sign-green)}
+  .surf-bar{flex:1;height:10px;background:#E8EDEA;border-radius:5px;overflow:hidden}
+  .surf-bar div{height:100%;background:var(--sky);border-radius:5px}
+  .surf-val{flex:0 0 34px;text-align:right;font-family:'IBM Plex Mono',monospace;font-size:.72rem;color:var(--ink-soft)}
+  .radio-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
+  .radio-row:last-child{border-bottom:none}
+  .radio-play{flex:0 0 auto;width:32px;height:32px;border-radius:50%;border:0;cursor:pointer;
+    background:var(--sign-green);color:#fff;font-size:.7rem}
+  .radio-name{font-weight:600;font-size:.88rem}
+  .radio-tags{font-size:.72rem;color:var(--ink-soft);margin-top:2px;text-transform:capitalize}
+  .mini-radio{
+    position:fixed;z-index:1500;bottom:16px;left:50%;transform:translateX(-50%);
+    display:flex;align-items:center;gap:12px;
+    background:var(--sign-green);color:#fff;border-radius:99px;
+    padding:8px 10px 8px 8px;box-shadow:var(--shadow);max-width:calc(100vw - 32px);
+  }
+  .mini-radio[hidden]{display:none}
+  .mini-play,.mini-close{
+    flex:0 0 auto;border:0;cursor:pointer;border-radius:50%;
+    width:34px;height:34px;font-size:.8rem;
+  }
+  .mini-play{background:var(--sun);color:var(--ink)}
+  .mini-close{background:rgba(255,255,255,.2);color:#fff}
+  .mini-info{min-width:0;padding-right:4px}
+  .mini-name{font-family:'Overpass',sans-serif;font-weight:700;font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+  .mini-sub{font-size:.68rem;color:#CFE3D9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
   .cam-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
   .cam-card{display:block;text-decoration:none;color:var(--ink)}
   .cam-imgwrap{position:relative;border-radius:10px;overflow:hidden;background:#E8EDEA}
@@ -619,7 +646,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.1</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.2</span></div>
       <div>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -647,6 +674,7 @@
   <div class="tabs" role="tablist" id="tabs" style="display:none">
     <button class="tab" role="tab" data-tab="weather" aria-selected="true">Weather</button>
     <button class="tab" role="tab" data-tab="alerts" aria-selected="false">Alerts<span class="cnt" id="alertCnt" style="display:none"></span></button>
+    <button class="tab" role="tab" data-tab="surf" aria-selected="false" id="surfTab" style="display:none">Surf</button>
     <button class="tab" role="tab" data-tab="news" aria-selected="false">News</button>
     <button class="tab" role="tab" data-tab="events" aria-selected="false">Events</button>
     <button class="tab" role="tab" data-tab="services" aria-selected="false">Services</button>
@@ -655,6 +683,7 @@
     <button class="tab" role="tab" data-tab="shopping" aria-selected="false">Shop</button>
     <button class="tab" role="tab" data-tab="kids" aria-selected="false">Kids</button>
     <button class="tab" role="tab" data-tab="cams" aria-selected="false">Cams</button>
+    <button class="tab" role="tab" data-tab="radio" aria-selected="false">Radio</button>
     <button class="tab" role="tab" data-tab="social" aria-selected="false">Social</button>
     <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved</button>
     <button class="tab" role="tab" data-tab="brief" aria-selected="false">Brief</button>
@@ -670,6 +699,13 @@
     </div>
   </div>
 </aside>
+
+<div class="mini-radio" id="miniRadio" hidden>
+  <button class="mini-play" id="miniPlay" aria-label="Play or pause">▶</button>
+  <div class="mini-info"><div class="mini-name" id="miniName"></div><div class="mini-sub" id="miniSub"></div></div>
+  <button class="mini-close" id="miniClose" aria-label="Stop radio">✕</button>
+</div>
+<audio id="radioAudio"></audio>
 
 <div class="cam-modal" id="camModal" hidden>
   <div class="cam-shell">
@@ -941,6 +977,9 @@ async function loadPlace(place, { fly=true } = {}){
   $('alertCnt').style.display = 'none';
   msg('');
 
+  $('surfTab').style.display = 'none';
+  state.cache.surf = undefined;
+  probeSurf(place);
   if(hereMarker) hereMarker.remove();
   hereMarker = L.marker([place.lat, place.lon], { icon:hereIcon, zIndexOffset:1000 })
     .addTo(map).bindTooltip(place.name, { className:'town-label', direction:'top', offset:[0,-10] });
@@ -994,6 +1033,16 @@ async function renderTab(name){
       const a = await getAlerts(token);
       if(token!==state.reqToken || state.tab!=='alerts') return;
       renderAlerts(a);
+    }else if(name==='surf'){
+      showLoading('Reading the surf…');
+      const su = await getSurf();
+      if(token!==state.reqToken || state.tab!=='surf') return;
+      renderSurf(su);
+    }else if(name==='radio'){
+      showLoading('Tuning in nearby stations…');
+      const rs = await getRadio();
+      if(token!==state.reqToken || state.tab!=='radio') return;
+      renderRadio(rs);
     }else if(name==='news'){
       showLoading('Searching local news…');
       const n = await getNews(token);
@@ -1806,6 +1855,125 @@ async function renderBriefFallback(){
   html += `</div>`;
   contentEl.innerHTML = html;
 }
+
+/* ---------------- surf & marine (Open-Meteo Marine, keyless) ---------------- */
+async function fetchSurf(lat, lon){
+  const u = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}` +
+    `&current=wave_height,wave_period,wave_direction,swell_wave_height,swell_wave_period,sea_surface_temperature` +
+    `&daily=wave_height_max&timezone=auto&forecast_days=7&length_unit=imperial`;
+  return fetchJSON(u);
+}
+async function probeSurf(place){
+  // Marine API returns null wave data for inland points — that's our coastal test
+  try{
+    const d = await fetchSurf(place.lat, place.lon);
+    const h = d?.current?.wave_height;
+    if(h != null && state.place === place){
+      state.cache.surf = d;
+      $('surfTab').style.display = '';
+    }
+  }catch(e){}
+}
+async function getSurf(){
+  if(state.cache.surf) return state.cache.surf;
+  const d = await fetchSurf(state.place.lat, state.place.lon);
+  state.cache.surf = d;
+  return d;
+}
+const compass = deg => ['N','NE','E','SE','S','SW','W','NW'][Math.round(((deg||0)%360)/45)%8];
+function renderSurf(d){
+  const c = d?.current;
+  if(!c || c.wave_height == null){ showError('No marine data for this spot.'); return; }
+  const ft = v => v == null ? '—' : v.toFixed(1) + ' ft';
+  let html = `
+    <div class="wx-now">
+      <div class="wx-temp" style="color:var(--sky)">${c.wave_height.toFixed(1)}<small>ft</small></div>
+      <div class="wx-desc">
+        <div class="lead">Waves ${ft(c.wave_height)} · ${Math.round(c.wave_period||0)}s</div>
+        <div class="sub">Swell ${ft(c.swell_wave_height)} at ${Math.round(c.swell_wave_period||0)}s from ${compass(c.wave_direction)}` +
+          (c.sea_surface_temperature != null ? ` · Water ${Math.round(c.sea_surface_temperature)}°` : '') + `</div>
+      </div>
+    </div>`;
+  const days = d.daily?.time || [];
+  if(days.length){
+    html += `<div class="sec-note" style="margin-top:12px">7-day wave height (max, ft)</div>`;
+    for(let i=0;i<days.length;i++){
+      const day = new Date(days[i]+'T12:00:00').toLocaleDateString(undefined,{weekday:'short'});
+      const hv = d.daily.wave_height_max[i];
+      const bar = Math.min(100, (hv/Math.max(...d.daily.wave_height_max))*100);
+      html += `
+        <div class="surf-row">
+          <div class="surf-day">${day}</div>
+          <div class="surf-bar"><div style="width:${bar}%"></div></div>
+          <div class="surf-val">${hv!=null?hv.toFixed(1):'—'}</div>
+        </div>`;
+    }
+  }
+  html += `<div class="sec-note">Marine forecast: Open-Meteo</div>`;
+  contentEl.innerHTML = html;
+}
+
+/* ---------------- local radio (Radio Browser, keyless) ---------------- */
+const RADIO_BASE = 'https://de1.api.radio-browser.info';
+async function getRadio(){
+  if(state.cache.radio) return state.cache.radio;
+  const st = (state.place.name.split(',')[1] || '').trim();
+  const full = REGION_ABBR[st] || st;
+  let list = [];
+  if(full){
+    try{
+      const u = `${RADIO_BASE}/json/stations/search?state=${encodeURIComponent(full)}` +
+        `&countrycode=${state.place.country==='CA'?'CA':'US'}&hidebroken=true&order=clickcount&reverse=true&limit=40`;
+      list = await fetchJSON(u);
+    }catch(e){}
+  }
+  state.cache.radio = list;
+  return list;
+}
+function renderRadio(list){
+  if(!list || !list.length){ contentEl.innerHTML = `<div class="empty-state"><p>No stations found for this area.</p></div>`; return; }
+  const seen = new Set();
+  let html = `<div class="sec-note">Local stations · tap to listen</div>`;
+  for(const s of list){
+    const url = s.url_resolved || s.url;
+    if(!url || seen.has(s.name)) continue;
+    seen.add(s.name);
+    const tags = (s.tags||'').split(',').slice(0,2).filter(Boolean).join(' · ');
+    html += `
+      <div class="radio-row" data-url="${esc(url)}" data-name="${esc(s.name)}" data-sub="${esc(tags)}">
+        <button class="radio-play">▶</button>
+        <div><div class="radio-name">${esc(s.name)}</div>${tags?`<div class="radio-tags">${esc(tags)}</div>`:''}</div>
+      </div>`;
+  }
+  html += `<div class="sec-note">Stations via Radio Browser</div>`;
+  contentEl.innerHTML = html;
+  contentEl.querySelectorAll('.radio-row').forEach(r=>{
+    r.addEventListener('click', ()=> playRadio(r.dataset.url, r.dataset.name, r.dataset.sub));
+  });
+}
+let radioPlaying = false;
+function playRadio(url, name, sub){
+  const a = $('radioAudio');
+  if(radioPlaying && a.dataset.url === url){ stopRadio(); return; }
+  a.src = url; a.dataset.url = url;
+  a.play().then(()=>{
+    radioPlaying = true;
+    $('miniName').textContent = name;
+    $('miniSub').textContent = sub || 'Live radio';
+    $('miniPlay').textContent = '❚❚';
+    $('miniRadio').hidden = false;
+  }).catch(()=>{ $('miniName').textContent = name; $('miniSub').textContent = 'Stream unavailable'; $('miniRadio').hidden = false; });
+}
+function stopRadio(){
+  const a = $('radioAudio'); a.pause(); a.src = ''; radioPlaying = false;
+  $('miniPlay').textContent = '▶';
+}
+$('miniPlay').addEventListener('click', ()=>{
+  const a = $('radioAudio');
+  if(radioPlaying){ a.pause(); radioPlaying = false; $('miniPlay').textContent = '▶'; }
+  else if(a.dataset.url){ a.play(); radioPlaying = true; $('miniPlay').textContent = '❚❚'; }
+});
+$('miniClose').addEventListener('click', ()=>{ stopRadio(); $('miniRadio').hidden = true; });
 
 /* ---------------- nearby webcams ---------------- */
 async function getCams(){
