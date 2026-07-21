@@ -646,7 +646,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.4</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.5</span></div>
       <div>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -760,6 +760,7 @@ const state = {
   backendP: null,       // resolves {ok, fsq, tm, ai} — whether our Node backend is present
   poiSearch: '',        // name filter within the current list
   poiOpenOnly: false,   // only places open right now
+  poiSort: 'dist',      // 'dist' | 'rating'
   favKeys: new Set(),   // normalized keys of saved places
   tab: 'weather',
   cache: {},            // per-place fetched data
@@ -1076,7 +1077,7 @@ async function renderTab(name){
       await renderSavedTab();
     }else{
       const labels = { services:'public services', attractions:'things to see', food:'places to eat', kids:'kids activities', shopping:'stores nearby', favorites:'golf, trails, theaters & rec' };
-      state.poiFilter = null; state.poiSearch = ''; state.poiOpenOnly = false;
+      state.poiFilter = null; state.poiSearch = ''; state.poiOpenOnly = false; state.poiSort = 'dist';
       showLoading('Finding '+labels[name]+' nearby…');
       const pois = await getPOIs(name, token);
       if(token!==state.reqToken || state.tab!==name) return;
@@ -1400,11 +1401,19 @@ function mergeBuckets(osmB, fsqB){
   const b = {};
   for(const c of cats){
     const merged = [...(osmB?.[c]||[])];
-    const seen = new Set(merged.map(i=>normName(i.name)));
+    const byName = new Map(merged.map(i=>[normName(i.name), i]));
     for(const it of (fsqB?.[c]||[])){
       const k = normName(it.name);
-      if(seen.has(k)) continue;
-      seen.add(k); merged.push(it);
+      const existing = byName.get(k);
+      if(existing){
+        // enrich the OSM entry with Foursquare rating/price/id where it lacks them
+        if(existing.rating == null && it.rating != null) existing.rating = it.rating;
+        if(existing.price == null && it.price != null) existing.price = it.price;
+        if(!existing.fsqId && it.fsqId) existing.fsqId = it.fsqId;
+        if(!existing.website && it.website) existing.website = it.website;
+        continue;
+      }
+      byName.set(k, it); merged.push(it);
     }
     merged.sort((a,x)=>a.dist-x.dist);
     b[c] = merged.slice(0, 80);
@@ -1463,6 +1472,12 @@ function openBadge(hours, openNow){
   if(v === false) return `<span class="openbadge closed">Closed</span>`;
   return '';
 }
+function ratingPill(it){
+  if(it.rating == null) return '';
+  const r = it.rating;
+  const cls = r >= 8 ? 'open' : r >= 6 ? '' : 'closed';
+  return ` <span class="openbadge ${cls}">★ ${Number(r).toFixed(1)}</span>`;
+}
 function directionsURL(it){
   return `https://www.google.com/maps/dir/?api=1&destination=${it.lat},${it.lon}`;
 }
@@ -1505,6 +1520,9 @@ function drawPOIs(kind){
   const filterable = (kind==='attractions' || kind==='kids' || kind==='shopping' || kind==='favorites');
   let items = all;
   if(filterable && state.poiFilter) items = items.filter(i=>i.kind===state.poiFilter);
+  if(state.poiSort === 'rating'){
+    items = [...items].sort((a,b)=> (b.rating ?? -1) - (a.rating ?? -1) || a.dist - b.dist);
+  }
   if(state.poiSearch){
     const q = state.poiSearch.toLowerCase();
     items = items.filter(i=>i.name.toLowerCase().includes(q));
@@ -1526,6 +1544,11 @@ function drawPOIs(kind){
     <div class="poicontrols">
       <input class="poi-search" placeholder="Filter by name" value="${esc(state.poiSearch)}" aria-label="Filter list by name">
       <button class="opennow" aria-pressed="${state.poiOpenOnly}">Open now</button>
+    </div>
+    <div class="filterrow sortrow" role="group" aria-label="Sort">
+      <span class="radlabel">Sort:</span>
+      <button data-sort="dist" aria-pressed="${state.poiSort!=='rating'}">Nearest</button>
+      <button data-sort="rating" aria-pressed="${state.poiSort==='rating'}">Top rated</button>
     </div>`;
   if(filterable){
     const counts = {};
@@ -1544,7 +1567,7 @@ function drawPOIs(kind){
     html += `
       <details class="poi">
         <summary>
-          <div><div class="nm">${esc(it.name)}</div><div class="kind">${esc(it.kind)}${openBadge(it.hours, it.openNow)}</div></div>
+          <div><div class="nm">${esc(it.name)}${ratingPill(it)}</div><div class="kind">${esc(it.kind)}${openBadge(it.hours, it.openNow)}</div></div>
           <div class="dist">${it.dist.toFixed(1)} mi</div>
         </summary>
         <div class="poi-more">${poiDetailHTML(it, idx++)}</div>
@@ -1592,6 +1615,8 @@ function drawPOIs(kind){
   });
   const onB = contentEl.querySelector('.opennow');
   if(onB) onB.addEventListener('click', ()=>{ state.poiOpenOnly = !state.poiOpenOnly; drawPOIs(kind); });
+  contentEl.querySelectorAll('.sortrow button').forEach(b=>
+    b.addEventListener('click', ()=>{ state.poiSort = b.dataset.sort; drawPOIs(kind); }));
   contentEl.querySelectorAll('details.poi').forEach((d,i)=>{
     d.addEventListener('toggle', ()=>{
       if(d.open) enrichPOI(state.currentPOIs[i], document.getElementById('desc-'+i));
