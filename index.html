@@ -25,6 +25,23 @@
     --shadow:0 10px 30px rgba(9,30,20,.18);
     font-size:16px;
   }
+  :root[data-theme="dark"]{
+    --sign-green:#1F7A57;
+    --sign-green-deep:#0E3D2B;
+    --paper:#161A18;
+    --ink:#E8EEEA;
+    --ink-soft:#9BAAA1;
+    --line:#2C332E;
+    --sun:#FFC72C;
+    --sky:#5BA3D0;
+    --alert:#E4573F;
+    --shadow:0 10px 30px rgba(0,0,0,.5);
+  }
+  :root[data-theme="dark"] #map{background:#0E1613}
+  :root[data-theme="dark"] .leaflet-tile{filter:brightness(.75) invert(1) hue-rotate(180deg) saturate(.8)}
+  :root[data-theme="dark"] .cost-cell{background:#202723}
+  :root[data-theme="dark"] .cam-imgwrap{background:#202723}
+  :root[data-theme="dark"] .cam-hint{background:#2A2A1A}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
   body{
@@ -660,8 +677,9 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.2</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.3</span></div>
       <div>
+        <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
       </div>
@@ -769,6 +787,17 @@
 ===================================================================== */
 
 const $ = id => document.getElementById(id);
+(function initTheme(){
+  const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);
+  const saved = m ? m[1] : (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  if(saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+})();
+function setTheme(mode){
+  if(mode === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  document.cookie = 'theme=' + mode + ';path=/;max-age=' + (365*86400);
+  const b = $('themeToggle'); if(b) b.textContent = mode === 'dark' ? '☀' : '◐';
+}
 const contentEl = $('content');
 const state = {
   place: null,          // {lat, lon, name}
@@ -3027,6 +3056,11 @@ $('hideBtn').addEventListener('click', hidePanel);
 $('reopenBtn').addEventListener('click', showPanel);
 
 /* hide just the location search, keeping tabs and content */
+$('themeToggle').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀' : '◐';
+$('themeToggle').addEventListener('click', ()=>{
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  setTheme(dark ? 'light' : 'dark');
+});
 $('headToggle').addEventListener('click', ()=>{
   const mini = $('panel').classList.toggle('headmini');
   $('headToggle').textContent = mini ? '▾' : '▴';
