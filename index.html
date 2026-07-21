@@ -311,6 +311,11 @@
   .mini-info{min-width:0;padding-right:4px}
   .mini-name{font-family:'Overpass',sans-serif;font-weight:700;font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
   .mini-sub{font-size:.68rem;color:#CFE3D9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
+  .cost-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 6px}
+  .cost-cell{background:#F5F2EA;border-radius:10px;padding:12px}
+  .cost-v{font-family:'Overpass',sans-serif;font-weight:800;font-size:1.15rem;color:var(--sign-green)}
+  .cost-l{font-size:.7rem;color:var(--ink-soft);margin-top:3px}
+  .cost-tax{font-family:'IBM Plex Mono',monospace;font-size:.8rem;color:var(--ink);font-weight:600;white-space:nowrap}
   .law-row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;
     padding:10px 0;border-bottom:1px solid var(--line)}
   .law-row:last-child{border-bottom:none}
@@ -655,7 +660,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.1</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v4.2</span></div>
       <div>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -698,6 +703,7 @@
     <button class="tab" role="tab" data-tab="saved" aria-selected="false">Saved</button>
     <button class="tab" role="tab" data-tab="brief" aria-selected="false">Brief</button>
     <button class="tab" role="tab" data-tab="laws" aria-selected="false">Laws</button>
+    <button class="tab" role="tab" data-tab="cost" aria-selected="false">Cost</button>
   </div>
 
   <div class="content" id="content">
@@ -994,6 +1000,7 @@ async function loadPlace(place, { fly=true } = {}){
   $('surfTab').style.display = 'none';
   state.cache.surf = undefined;
   state.cache.surfSpots = undefined;
+  state.cache.cost = undefined;
   probeSurf(place);
   if(hereMarker) hereMarker.remove();
   hereMarker = L.marker([place.lat, place.lon], { icon:hereIcon, zIndexOffset:1000 })
@@ -1100,6 +1107,11 @@ async function renderTab(name){
       const lw = await getLaws();
       if(token!==state.reqToken || state.tab!=='laws') return;
       renderLaws(lw);
+    }else if(name==='cost'){
+      showLoading('Totting up the cost of living…');
+      const ct = await getCost();
+      if(token!==state.reqToken || state.tab!=='cost') return;
+      renderCost(ct);
     }else if(name==='saved'){
       await renderSavedTab();
     }else{
@@ -2233,6 +2245,52 @@ function closeCamModal(){
 $('camModalClose').addEventListener('click', closeCamModal);
 $('camModal').addEventListener('click', ev => { if(ev.target === $('camModal')) closeCamModal(); });
 document.addEventListener('keydown', ev => { if(ev.key === 'Escape' && !$('camModal').hidden) closeCamModal(); });
+
+/* ---------------- cost of living (Census housing + state tax via Gemini) ---------------- */
+async function getCost(){
+  if(state.cache.cost) return state.cache.cost;
+  const be = await state.backendP;
+  const parts = state.place.name.split(',').map(x=>x.trim());
+  const st = parts[1] || '';
+  const region = REGION_ABBR[st] || st;
+  const [census, taxes] = await Promise.all([
+    fetchT(`/api/census?lat=${state.place.lat}&lon=${state.place.lon}`, {}, 15000)
+      .then(r=>r.ok?r.json():null).catch(()=>null),
+    (be.ai && region && state.place.country!=='CA')
+      ? fetchT(`/api/taxes?state=${encodeURIComponent(region)}`, {}, 30000)
+          .then(r=>r.ok?r.json():{items:[]}).then(j=>j.items||[]).catch(()=>[])
+      : Promise.resolve([])
+  ]);
+  state.cache.cost = { census, taxes, region };
+  return state.cache.cost;
+}
+function renderCost(d){
+  const c = d.census;
+  let html = '';
+  if(c && (c.homeValue || c.rent || c.propertyTax || c.medianIncome)){
+    const money = v => v ? '$' + Number(v).toLocaleString() : '—';
+    const effRate = (c.propertyTax && c.homeValue)
+      ? ((c.propertyTax / c.homeValue) * 100).toFixed(2) + '%' : null;
+    html += `<div class="sec-note">Housing &amp; income in ${esc(c.area||'this area')}${c.level==='county'?' (county)':''}</div>
+      <div class="cost-grid">
+        <div class="cost-cell"><div class="cost-v">${money(c.medianIncome)}</div><div class="cost-l">Median household income</div></div>
+        <div class="cost-cell"><div class="cost-v">${money(c.homeValue)}</div><div class="cost-l">Median home value</div></div>
+        <div class="cost-cell"><div class="cost-v">${money(c.rent)}</div><div class="cost-l">Median gross rent / mo</div></div>
+        <div class="cost-cell"><div class="cost-v">${money(c.propertyTax)}</div><div class="cost-l">Median property tax / yr</div></div>
+      </div>`;
+    if(effRate) html += `<div class="sec-note">Effective property tax rate ≈ ${effRate} of home value</div>`;
+  }
+  if(d.taxes?.length){
+    html += `<div class="sec-note" style="margin-top:14px">Taxes &amp; fees across ${esc(d.region)}</div>`;
+    for(const t of d.taxes){
+      html += `<div class="law-row"><div class="law-txt">${esc(t.label)}</div><span class="cost-tax">${esc(t.value)}</span></div>`;
+    }
+    html += `<div class="sec-note" style="margin-top:8px">State-level general figures — local rates and specific fees vary. Not tax advice.</div>`;
+  }
+  if(!html){ contentEl.innerHTML = `<div class="empty-state"><p>No cost data available for this spot.</p></div>`; return; }
+  html += `<div class="sec-note">Housing &amp; income: US Census ACS</div>`;
+  contentEl.innerHTML = html;
+}
 
 /* ---------------- quirky laws (state + town, permanently cached server-side) ---------------- */
 async function getLaws(){

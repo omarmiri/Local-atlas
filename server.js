@@ -373,6 +373,20 @@ async function lawsFor(scope, place, region){
     return Array.isArray(ranked) ? ranked.slice(0, 7) : [];
   });
 }
+app.get('/api/taxes', async (req, res) => {
+  try{
+    if(!AI) return res.status(503).json({ error: 'not configured' });
+    const stName = String(req.query.state || '').slice(0, 40);
+    if(!stName) return res.status(400).json({ error: 'state required' });
+    const data = await cached('taxes:' + stName.toLowerCase().replace(/[^a-z]/g, ''), 180 * 86400e3, async () => {
+      return geminiJSON(
+`Give current general tax and common government-fee information for the US state of ${stName}. Use typical/approximate figures where exact varies locally, and note when something varies. Respond ONLY with a JSON array of {"label":"...","value":"..."} pairs covering: state sales tax rate, state income tax (rate or range, or "none"), gas tax, vehicle registration (typical annual/base cost), and typical real-estate transfer or recording context if notable. Keep values short.
+[{"label":"Sales tax","value":"6.625%"}]`, 900);
+    });
+    res.json({ items: Array.isArray(data) ? data : [] });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
 app.get('/api/laws', async (req, res) => {
   try{
     if(!AI) return res.status(503).json({ error: 'not configured' });
@@ -416,9 +430,9 @@ app.get('/api/census', async (req, res) => {
   try{
     const { lat, lon } = req.query;
     if(!lat || !lon) return res.status(400).json({ error: 'bad params' });
-    const out = await cached(`cs5:${(+lat).toFixed(3)},${(+lon).toFixed(3)}`, 30 * 86400e3, async () => {
+    const out = await cached(`cs6:${(+lat).toFixed(3)},${(+lon).toFixed(3)}`, 30 * 86400e3, async () => {
       const key = CENSUS ? '&key=' + CENSUS : '';
-      const vars = 'NAME,B01003_001E,B19013_001E,B01002_001E';   // pop, median income, median age
+      const vars = 'NAME,B01003_001E,B19013_001E,B01002_001E,B25077_001E,B25064_001E,B25103_001E';   // +median home value, gross rent, property tax
       // Census geocoder → the incorporated city/town containing this point.
       // Only these two layers matter; we deliberately do NOT request sub-place
       // or tract layers, which is what surfaced neighborhoods before.
@@ -446,21 +460,24 @@ app.get('/api/census', async (req, res) => {
         const row = await getRow(`for=place:${place.PLACE}&in=state:${place.STATE}`);
         if(row && +row[1] > 0)
           return { area: clean(row[0]), level: 'town',
-            population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
+            population: +row[1], medianIncome: +row[2], medianAge: +row[3],
+            homeValue: +row[4] || null, rent: +row[5] || null, propertyTax: +row[6] || null };
       }
       // 2) township / county subdivision (skip "not defined" subdivisions, code 00000)
       if(subdiv?.STATE && subdiv?.COUNTY && subdiv?.COUSUB && subdiv.COUSUB !== '00000'){
         const row = await getRow(`for=county%20subdivision:${subdiv.COUSUB}&in=state:${subdiv.STATE}%20county:${subdiv.COUNTY}`);
         if(row && +row[1] > 0)
           return { area: clean(row[0]), level: 'town',
-            population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
+            population: +row[1], medianIncome: +row[2], medianAge: +row[3],
+            homeValue: +row[4] || null, rent: +row[5] || null, propertyTax: +row[6] || null };
       }
       // 3) county fallback
       if(county?.STATE && county?.COUNTY){
         const row = await getRow(`for=county:${county.COUNTY}&in=state:${county.STATE}`);
         if(row)
           return { area: row[0], level: 'county',
-            population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
+            population: +row[1], medianIncome: +row[2], medianAge: +row[3],
+            homeValue: +row[4] || null, rent: +row[5] || null, propertyTax: +row[6] || null };
       }
       throw new Error('outside US census coverage');
     });
