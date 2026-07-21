@@ -207,6 +207,10 @@
   .state-row .metric{
     font-family:'IBM Plex Mono',monospace;font-size:.68rem;color:var(--sky);font-weight:500;margin-left:4px;
   }
+  .eonet-pin{
+    font-size:18px;line-height:26px;text-align:center;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.5));
+  }
   .rank-pin{
     background:var(--sun);border:2.5px solid var(--sign-green);border-radius:50%;
     font-family:'Overpass',sans-serif;font-weight:800;font-size:.72rem;color:var(--ink);
@@ -639,6 +643,7 @@
     <button data-layer="clouds" aria-pressed="false" title="OpenWeather free tier runs ~3 h behind">☁ Clouds</button>
     <button data-layer="temp" aria-pressed="false" title="OpenWeather free tier runs ~3 h behind">🌡 Temperature</button>
     <button data-layer="fires" aria-pressed="false">🔥 Fire hotspots</button>
+    <button data-layer="natural" aria-pressed="false">🌋 Natural events</button>
   </div>
 </div>
 
@@ -646,7 +651,7 @@
   <button class="sheet-toggle" id="sheetToggle" aria-label="Expand or collapse panel"></button>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.5</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v3.6</span></div>
       <div>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -773,9 +778,9 @@ state.backendP = (async ()=>{
     const ctl = new AbortController();
     setTimeout(()=>ctl.abort(), 4000);
     const r = await fetch('/api/health', { signal: ctl.signal });
-    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy }; }
+    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy, nasa:!!j.nasa }; }
   }catch(e){}
-  return { ok:false, fsq:false, tm:false, ai:false, owm:false, windy:false };
+  return { ok:false, fsq:false, tm:false, ai:false, owm:false, windy:false, nasa:false };
 })();
 
 /* ---------------- map ---------------- */
@@ -992,13 +997,23 @@ async function loadPlace(place, { fly=true } = {}){
   getAllPOIs().catch(()=>{});   // one combined request warms all four list tabs
   // prefetch alerts so the badge count shows even before that tab is opened
   $('alertBanner').hidden = true;
-  getAlerts(token).then(a => {
+  Promise.all([ getAlerts(token).catch(()=>[]), fetchNaturalEvents().catch(()=>[]) ]).then(([a, nat]) => {
     if(token !== state.reqToken) return;
+    const nearby = (nat||[]).filter(e => haversine(place.lat, place.lon, e.lat, e.lon) < 150);
+    const bits = [];
     if(a && a.length){
       const c=$('alertCnt'); c.textContent=a.length; c.style.display='inline-block';
+      bits.push(`${a.length} weather alert${a.length>1?'s':''}`);
+    }
+    if(nearby.length){
+      const kinds = [...new Set(nearby.map(e=>e.category.toLowerCase()))].slice(0,2).join(', ');
+      bits.push(`${nearby.length} natural event${nearby.length>1?'s':''} nearby (${kinds})`);
+    }
+    if(bits.length){
       const b=$('alertBanner');
-      b.textContent = `⚠ ${a.length} active weather alert${a.length>1?'s':''} — tap to view`;
+      b.textContent = '⚠ ' + bits.join(' · ') + ' — tap to view';
       b.hidden = false;
+      b._hasNatural = nearby.length > 0;
     }
   }).catch(()=>{});
 }
@@ -2658,8 +2673,37 @@ async function startRadarLoop(){
   const timer = setInterval(()=>{ idx = (idx+1) % layers.length; show(idx); }, 900);
   return { remove(){ clearInterval(timer); layers.forEach(l=>l.remove()); label.hidden = true; } };
 }
+const EONET_ICON = { wildfires:'🔥', severeStorms:'🌀', volcanoes:'🌋', floods:'🌊',
+  landslides:'⛰️', drought:'🏜️', dustHaze:'🌫️', seaLakeIce:'🧊', snow:'❄️',
+  earthquakes:'⚠️', tempExtremes:'🌡️', manmade:'⚙️', waterColor:'💧' };
+async function fetchNaturalEvents(){
+  if(state.cache.natural && Date.now() - state.cache.naturalAt < 20*60e3) return state.cache.natural;
+  const be = await state.backendP;
+  if(!be.ok) return [];
+  try{
+    const r = await fetchT('/api/events-natural', {}, 12000);
+    if(!r.ok) return [];
+    state.cache.natural = (await r.json()).events || [];
+    state.cache.naturalAt = Date.now();
+    return state.cache.natural;
+  }catch(e){ return []; }
+}
 async function makeOverlay(name){
   const be = await state.backendP;
+  if(name === 'natural'){
+    const evs = await fetchNaturalEvents();
+    const grp = L.layerGroup();
+    for(const e of evs){
+      const emoji = EONET_ICON[e.cat] || '⚠️';
+      L.marker([e.lat, e.lon], { icon: L.divIcon({ className:'eonet-pin', html: emoji, iconSize:[26,26] }) })
+        .bindPopup(`<strong>${esc(e.title)}</strong><br>${esc(e.category)}` +
+          (e.date ? `<br><small>${new Date(e.date).toLocaleDateString()}</small>` : '') +
+          (e.url ? `<br><a href="${esc(e.url)}" target="_blank" rel="noopener">Details</a>` : ''))
+        .addTo(grp);
+    }
+    if(!evs.length) throw new Error('no active events');
+    return grp;
+  }
   if(name === 'clouds' || name === 'temp'){
     if(!be.owm) throw new Error('needs OpenWeather key');
     const lyr = name === 'clouds' ? 'clouds_new' : 'temp_new';
@@ -2864,6 +2908,10 @@ $('alertBanner').addEventListener('click', ()=>{
   $('panel').classList.remove('collapsed');
   document.body.classList.remove('panel-mini');
   selectTab('alerts');
+  if($('alertBanner')._hasNatural){
+    const btn = document.querySelector('#layerMenu button[data-layer="natural"]');
+    if(btn && btn.getAttribute('aria-pressed') !== 'true') btn.click();
+  }
 });
 $('hideBtn').addEventListener('click', hidePanel);
 $('reopenBtn').addEventListener('click', showPanel);

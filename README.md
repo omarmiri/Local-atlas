@@ -30,6 +30,7 @@ remembered between visits.
    - `CENSUS_API_KEY` — optional; raises rate limits on the county-profile lookups
    - `GEMINI_API_KEY` — the AI "Brief" tab (Gemini Flash-Lite, cheapest tier; free key at aistudio.google.com). Optional `GEMINI_MODEL` overrides the model.
    - `OPENWEATHER_API_KEY` — optional; Clouds and Temperature map layers (free key at openweathermap.org; free tier is ~3 h delayed and 60 calls/min — the server caps and caches to stay under it).
+   - `NASA_API_KEY` — the Natural Events map layer (live wildfires, storms, volcanoes, floods via NASA EONET; free key at api.nasa.gov).
    - `WINDY_API_KEY` — optional; the Cams tab (live nearby webcams; free key at api.windy.com, attribution to Windy required and shown).
    - `NPS_API_KEY` — optional; national-park event counts in the Top States leaderboards (free key at nps.gov/subjects/developer).
 4. Deploy. Every feature degrades gracefully when its key is absent.

@@ -19,6 +19,7 @@ const AI = process.env.GEMINI_API_KEY || '';
 const OWM = process.env.OPENWEATHER_API_KEY || '';
 const NPS = process.env.NPS_API_KEY || '';
 const WINDY = process.env.WINDY_API_KEY || '';
+const NASA = process.env.NASA_API_KEY || '';
 const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';  // cheapest tier, auto-tracks latest
 
 /* ---- two-level TTL cache: in-memory L1, optional Upstash Redis L2 ----
@@ -67,7 +68,7 @@ async function cached(key, ttlMs, fn){
   return v;
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS, windy: !!WINDY }));
+app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS, windy: !!WINDY, nasa: !!NASA }));
 
 /* ---- Foursquare places ---- */
 /* Legacy v3 was shut down May 15 2026 — this is the new Places API.
@@ -462,6 +463,32 @@ ${JSON.stringify(data).slice(0, 12000)}` }] }],
       return (j.candidates?.[0]?.content?.parts || []).map(pt => pt.text || '').join('').trim();
     });
     res.json({ text });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* ---- NASA EONET natural events (wildfires, storms, volcanoes, floods…) ---- */
+app.get('/api/events-natural', async (req, res) => {
+  try{
+    const data = await cached('eonet:open', 20 * 60e3, async () => {
+      const rr = await fetch('https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=200');
+      if(!rr.ok) throw new Error('EONET HTTP ' + rr.status);
+      return rr.json();
+    });
+    const events = (data.events || []).map(e => {
+      const geo = (e.geometry || []).slice(-1)[0];   // most recent position
+      if(!geo || !Array.isArray(geo.coordinates)) return null;
+      const [lon, lat] = geo.coordinates;
+      if(typeof lat !== 'number' || typeof lon !== 'number') return null;
+      return {
+        id: e.id, title: e.title,
+        category: e.categories?.[0]?.title || 'Event',
+        cat: e.categories?.[0]?.id || '',
+        lat, lon,
+        date: geo.date || '',
+        url: e.sources?.[0]?.url || (e.link || '')
+      };
+    }).filter(Boolean);
+    res.json({ events });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
