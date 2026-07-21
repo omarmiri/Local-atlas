@@ -416,18 +416,41 @@ app.get('/api/census', async (req, res) => {
   try{
     const { lat, lon } = req.query;
     if(!lat || !lon) return res.status(400).json({ error: 'bad params' });
-    const out = await cached(`cs:${(+lat).toFixed(2)},${(+lon).toFixed(2)}`, 7 * 86400e3, async () => {
-      const fr = await fetch(`https://geo.fcc.gov/api/census/area?lat=${lat}&lon=${lon}&format=json`);
-      if(!fr.ok) throw new Error('FCC HTTP ' + fr.status);
-      const a = (await fr.json()).results?.[0];
-      if(!a?.county_fips) throw new Error('outside US census coverage');
-      const st = a.county_fips.slice(0, 2), co = a.county_fips.slice(2);
+    const out = await cached(`cs2:${(+lat).toFixed(3)},${(+lon).toFixed(3)}`, 30 * 86400e3, async () => {
       const key = CENSUS ? '&key=' + CENSUS : '';
-      const cr = await fetch('https://api.census.gov/data/2023/acs/acs5' +
-        `?get=NAME,B01003_001E,B19013_001E,B01002_001E&for=county:${co}&in=state:${st}${key}`);
-      if(!cr.ok) throw new Error('Census HTTP ' + cr.status);
-      const row = (await cr.json())[1];
-      return { county: row[0], population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
+      const vars = 'NAME,B01003_001E,B19013_001E,B01002_001E';   // pop, median income, median age
+      // Census geocoder resolves a coordinate to its "place" (town/city) + county
+      const gr = await fetch('https://geocoding.geo.census.gov/geocoder/geographies/coordinates' +
+        `?x=${lon}&y=${lat}&benchmark=Public_AR_Current&vintage=Current_Current` +
+        '&layers=Incorporated%20Places,Census%20Designated%20Places,Counties&format=json');
+      if(!gr.ok) throw new Error('Census geocoder HTTP ' + gr.status);
+      const geos = (await gr.json())?.result?.geographies || {};
+      const place = (geos['Incorporated Places'] || geos['Census Designated Places'] || [])[0];
+      const county = (geos['Counties'] || [])[0];
+
+      // try place (town) level first, fall back to county
+      if(place?.STATE && place?.PLACE){
+        try{
+          const cr = await fetch(`https://api.census.gov/data/2023/acs/acs5?get=${vars}` +
+            `&for=place:${place.PLACE}&in=state:${place.STATE}${key}`);
+          if(cr.ok){
+            const row = (await cr.json())[1];
+            if(row && +row[1] > 0){
+              return { area: (row[0]||'').replace(/,.*$/, ''), level: 'town',
+                population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
+            }
+          }
+        }catch(e){}
+      }
+      if(county?.STATE && county?.COUNTY){
+        const cr = await fetch(`https://api.census.gov/data/2023/acs/acs5?get=${vars}` +
+          `&for=county:${county.COUNTY}&in=state:${county.STATE}${key}`);
+        if(!cr.ok) throw new Error('Census HTTP ' + cr.status);
+        const row = (await cr.json())[1];
+        return { area: row[0], level: 'county',
+          population: +row[1], medianIncome: +row[2], medianAge: +row[3] };
+      }
+      throw new Error('outside US census coverage');
     });
     res.json(out);
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
