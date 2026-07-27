@@ -194,7 +194,7 @@ const GOOG_TYPES = {
 };
 const GOOG_MASK = [
   'places.id', 'places.displayName', 'places.location', 'places.formattedAddress',
-  'places.primaryTypeDisplayName', 'places.types', 'places.rating', 'places.userRatingCount',
+  'places.primaryType', 'places.primaryTypeDisplayName', 'places.types', 'places.rating', 'places.userRatingCount',
   'places.priceLevel', 'places.websiteUri', 'places.nationalPhoneNumber', 'places.regularOpeningHours'
 ].join(',');
 const GOOG_PRICE = { PRICE_LEVEL_FREE: 1, PRICE_LEVEL_INEXPENSIVE: 1, PRICE_LEVEL_MODERATE: 2,
@@ -208,6 +208,27 @@ async function googErr(rr){
     return `HTTP ${rr.status} ${j.error?.status || ''} ${j.error?.message || ''}`.trim();
   }catch(e){ return 'HTTP ' + rr.status; }
 }
+/* includedTypes matches a place's *secondary* types too, so a science centre
+   with an IMAX comes back under movie_theater and a hotel gym under
+   fitness_center. Verified live on Rec: hotels, restaurants and art museums.
+   Rule: drop a result only when another tab plainly owns its primary identity.
+   Deliberately not "primaryType must be in the requested list" — Google's
+   restaurants carry specific primary types (pizza_restaurant, italian_...)
+   that appear in no list, and that stricter rule would gut the Eat tab. */
+const GOOG_OWN = Object.fromEntries(Object.entries(GOOG_TYPES).map(([k, v]) => [k, new Set(v)]));
+const GOOG_CLAIMED = new Set(Object.values(GOOG_TYPES).flat());
+/* Lodging matches these searches via hotel gyms, pools and marinas but belongs
+   on no place tab. Checked after the own-list test so `campground`, which Rec
+   legitimately claims, is unaffected. */
+const GOOG_NEVER = new Set(['hotel', 'motel', 'resort_hotel', 'extended_stay_hotel',
+  'bed_and_breakfast', 'hostel', 'guest_house', 'inn', 'lodging', 'apartment_complex',
+  'apartment_building', 'real_estate_agency', 'storage', 'moving_company']);
+function googOffTopic(category, primaryType){
+  if(!primaryType) return false;                       // unknown identity: let it through
+  if(GOOG_OWN[category]?.has(primaryType)) return false;
+  if(GOOG_NEVER.has(primaryType)) return true;
+  return GOOG_CLAIMED.has(primaryType);                // another tab owns this
+}
 function haversineMi(aLat, aLon, bLat, bLon){
   const R = 3958.8, rad = d => d * Math.PI / 180;
   const dLa = rad(bLat - aLat), dLo = rad(bLon - aLon);
@@ -217,7 +238,9 @@ function haversineMi(aLat, aLon, bLat, bLon){
 async function googPlaces(category, lat, lon, r){
   const types = GOOG_TYPES[category];
   const rad = Math.min(r, 50000);                      // Google caps the circle at 50 km
-  const key = `gpl:${category}:${(+lat).toFixed(4)},${(+lon).toFixed(4)}:${rad}`;
+  // gpl2: entries cached before primaryType joined the field mask have no
+  // primaryType, so googOffTopic would silently pass everything for 6 h
+  const key = `gpl2:${category}:${(+lat).toFixed(4)},${(+lon).toFixed(4)}:${rad}`;
   const data = await cached(key, 6 * 3600e3, async () => {
     /* Google 400s the whole request if any single includedType is unknown to it.
        Trim from the tail rather than collapsing to one type — dropping straight
@@ -260,9 +283,11 @@ async function googPlaces(category, lat, lon, r){
       rating5: p.rating ?? null,
       ratingCount: p.userRatingCount ?? null,
       price: GOOG_PRICE[p.priceLevel] ?? null,
+      offTopic: googOffTopic(category, p.primaryType),
       src: 'goog'
     };
-  }).filter(p => p.lat != null && p.name);
+  }).filter(p => p.lat != null && p.name && !p.offTopic)
+    .map(({ offTopic, ...rest }) => rest);
 }
 
 /* Cap a best-effort provider call. The underlying promise keeps running and
