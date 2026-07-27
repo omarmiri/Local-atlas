@@ -1502,7 +1502,35 @@ function getAllPOIs(){
 }
 async function getPOIs(kind){
   const buckets = await getAllPOIs();
-  return buckets[kind] || [];
+  const list = buckets[kind] || [];
+  return kind === 'kids' ? filterKidsList(list) : list;
+}
+/* The Kids bucket inherits adult venues from its providers — Foursquare's
+   "Arts & Entertainment" tree is the same category id as Attractions, and
+   Google files tattoo studios under art galleries. The backend screens the list
+   (blocklist + Gemini) and returns indices to drop. Fails open on any error:
+   an unfiltered Kids tab beats an empty one, and the server's own blocklist
+   still applies even when Gemini is unavailable. */
+async function filterKidsList(list){
+  if(!list.length) return list;
+  if(state.cache.kidsFiltered) return state.cache.kidsFiltered;
+  let out = list;
+  try{
+    const be = await state.backendP;
+    if(be.ok){
+      const r = await fetchT('/api/kids-filter', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ items: list.slice(0, 80).map(i=>({ name:i.name, kind:i.kind })) })
+      }, 20000);
+      if(r.ok){
+        const d = await r.json();
+        const drop = new Set(d.drop || []);
+        if(drop.size) out = list.filter((_, i)=>!drop.has(i));
+      }
+    }
+  }catch(e){}
+  state.cache.kidsFiltered = out;
+  return out;
 }
 /* /api/places already merges Google Places + Foursquare server-side; this just
    fans out over the five category buckets the tabs use. */
@@ -2584,10 +2612,33 @@ async function proxiedText(url){
   throw lastErr;
 }
 
+/* "Wayne" also matches Fort Wayne IN and Wayne County MI. The backend does the
+   real filtering; this mirrors it for the CORS-proxy fallbacks, which never
+   touch our server. Drops only stories positively placed somewhere else. */
+const NEWS_LEAD = new Set(['fort','ft','west','east','north','south','new','old','lake','mount','mt',
+  'port','saint','st','upper','lower','big','little','glen','cape','castle','white','green','grand',
+  'high','long','red','black']);
+function newsIsElsewhere(text, town, regionFull){
+  const t = (text||'').toLowerCase(), p = town.toLowerCase();
+  const rx = new RegExp('([a-z]+\\.?\\s+)?\\b'+p.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','g');
+  let m, seen=false, standalone=false;
+  while((m = rx.exec(t))){ seen=true; if(!NEWS_LEAD.has((m[1]||'').trim().replace(/\.$/,''))) standalone=true; }
+  if(seen && !standalone) return true;                       // only ever "Fort Wayne"
+  const ours = (regionFull||'').toLowerCase();
+  if(ours && t.includes(ours)) return false;
+  return Object.values(REGION_ABBR).some(n=>{
+    const nl = n.toLowerCase();
+    return nl!==ours && nl!==p && t.includes(nl);            // names another state, never ours
+  });
+}
 async function getNewsRSS(){
   const city = state.place.name;
   const cc = state.place.country==='CA' ? 'CA' : 'US';
-  const feed = `https://news.google.com/rss/search?q=${encodeURIComponent('"'+city.split(',')[0]+'" local news')}&hl=en-${cc}&gl=${cc}&ceid=${cc}:en`;
+  const town = city.split(',')[0].trim();
+  const st = (city.split(',')[1]||'').trim();
+  const regionFull = REGION_ABBR[st.toUpperCase()] || st;
+  const query = regionFull ? `"${town}" "${regionFull}"` : `"${town}" local news`;
+  const feed = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-${cc}&gl=${cc}&ceid=${cc}:en`;
   const parseXML = txt => {
     const xml = new DOMParser().parseFromString(txt, 'text/xml');
     const list = [...xml.querySelectorAll('item')];
@@ -2604,7 +2655,7 @@ async function getNewsRSS(){
     async ()=>{
       const be = await state.backendP;
       if(!be.ok) throw new Error('no backend');
-      const r = await fetchT(`/api/news?q=${encodeURIComponent(city.split(',')[0])}&country=${cc}`, {}, 10000);
+      const r = await fetchT(`/api/news?q=${encodeURIComponent(town)}&region=${encodeURIComponent(regionFull)}&country=${cc}`, {}, 10000);
       if(!r.ok) throw new Error('HTTP '+r.status);
       const j = await r.json();
       if(!j.items?.length) throw new Error('empty');
@@ -2631,7 +2682,8 @@ async function getNewsRSS(){
       summary: it.pub ? new Date(it.pub).toLocaleString() : '',
       link: it.link || ''
     };
-  }).sort((a,b)=>b.ts-a.ts).slice(0, 8);
+  }).filter(n=>!newsIsElsewhere(n.title+' '+n.source, town, regionFull))
+    .sort((a,b)=>b.ts-a.ts).slice(0, 8);
   state.cache.news = items;
   return items;
 }

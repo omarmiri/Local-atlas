@@ -272,15 +272,123 @@ app.get('/api/places', async (req, res) => {
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
-/* ---- local news (Google News RSS, server-side) ---- */
+/* ---- kids-safety pass ----
+   The Kids tab inherits adult venues by construction: FSQ_CATS.kids is
+   Foursquare's whole "Arts & Entertainment" tree (tattoo parlours, nightlife,
+   the lot) and Google files tattoo studios under art galleries. Two stages —
+   a blocklist that costs nothing and works with no API key, then Gemini on
+   whatever is left. Fails open: a filter outage must never empty the tab. */
+const KIDS_BLOCK = /\b(tattoo|piercing|body\s?art|vape|smoke\s?shop|head\s?shop|cannabis|marijuana|dispensary|cbd|liquor|winery|wine\s?bar|spirits|brewery|brewpub|distillery|taproom|beer\s?garden|pub|tavern|saloon|lounge|nightclub|night\s?club|casino|gambling|adult|lingerie|gentlemen'?s|strip\s?club|hookah|cigar|tobacco|pawn|firearm|ammo|rifle|pistol|handgun|shooting|sharpshoot\w*|gun\s?(shop|range|club|store)|indoor\s?range|funeral|mortuary|cemetery|cremator|bail\s?bonds|payday\s?loan|massage\s?parlou?r)\b/i;
+/* "Juice Bar" is not a bar — only treat a bare "bar" as adult when nothing
+   food-shaped qualifies it. */
+const KIDS_BAR = /\bbars?\b/i;
+const KIDS_BAR_OK = /\b(juice|salad|snack|smoothie|coffee|sushi|oxygen|candy|cereal|yogurt|milk|soda|ice\s?cream|taco|noodle|sandwich|bagel|donut|doughnut)\s?bar\b/i;
+function kidsBlocked(name, kind){
+  const t = `${name || ''} ${kind || ''}`;
+  if(KIDS_BLOCK.test(t)) return true;
+  return KIDS_BAR.test(t) && !KIDS_BAR_OK.test(t);
+}
+app.post('/api/kids-filter', express.json({ limit: '120kb' }), async (req, res) => {
+  try{
+    const list = (Array.isArray(req.body?.items) ? req.body.items : []).slice(0, 80)
+      .map(i => ({ name: String(i?.name || '').slice(0, 90), kind: String(i?.kind || '').slice(0, 60) }));
+    if(!list.length) return res.json({ drop: [], why: {} });
+    const drop = new Set(), why = {};
+    const undecided = [];
+    list.forEach((it, i) => {
+      if(kidsBlocked(it.name, it.kind)){ drop.add(i); why[i] = 'category not suitable for children'; }
+      else undecided.push(i);
+    });
+    if(AI && undecided.length){
+      try{
+        const key = 'kidsf:v1:' + require('crypto').createHash('sha1')
+          .update(JSON.stringify(undecided.map(i => list[i]))).digest('hex');
+        const verdicts = await cached(key, 180 * 86400e3, async () => geminiJSON(
+`Below is a numbered list of real businesses and places that a family app is about to show on a "Kids" tab — places to take children. Some are miscategorised by the data provider and are not remotely child-appropriate (tattoo studios filed as art galleries, bars filed as entertainment, vape shops, adult venues, gun ranges, etc.).
+
+Return ONLY a JSON array naming the entries that should NOT appear on a children's tab. If every entry is fine, return []. Judge by what the place actually is, not by its label. Keep genuinely kid-relevant places (playgrounds, parks, zoos, museums, libraries, arcades, ice cream, family restaurants, swim schools) even if the label is odd.
+[{"i":3,"why":"tattoo studio"}]
+
+PLACES:
+${undecided.map(i => `${i}. ${list[i].name} — ${list[i].kind || 'unknown'}`).join('\n')}`, 900));
+        for(const v of (Array.isArray(verdicts) ? verdicts : [])){
+          const i = Number(v?.i);
+          if(Number.isInteger(i) && i >= 0 && i < list.length && !drop.has(i)){
+            drop.add(i); why[i] = String(v?.why || 'flagged as not child-appropriate').slice(0, 80);
+          }
+        }
+      }catch(e){ /* fail open: keep the blocklist result */ }
+    }
+    res.json({ drop: [...drop].sort((a, b) => a - b), why, ai: !!AI });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* ---- local news (Google News RSS, server-side) ----
+   Google News search is token-based, so a bare town name matches the wrong town
+   in the wrong state: "Wayne" pulls in Fort Wayne IN and Wayne County MI. Two
+   defences — pin the region into the query, then drop any result whose only
+   mention of the town belongs to a different place. */
+const CA_PROVINCES = [['Ontario','ON'],['Quebec','QC'],['British Columbia','BC'],['Alberta','AB'],
+  ['Manitoba','MB'],['Saskatchewan','SK'],['Nova Scotia','NS'],['New Brunswick','NB'],
+  ['Newfoundland and Labrador','NL'],['Prince Edward Island','PE'],['Yukon','YT'],
+  ['Northwest Territories','NT'],['Nunavut','NU']];
+let _regionPairs = null;
+function regionPairs(){            // lazy: STATES is declared further down the file
+  if(!_regionPairs) _regionPairs = [...STATES.map(s => [s[0], s[1]]), ...CA_PROVINCES];
+  return _regionPairs;
+}
+function regionForms(region){
+  const r = String(region || '').trim();
+  if(!r) return { name: '', abbr: '' };
+  const lc = r.toLowerCase();
+  const hit = regionPairs().find(([n, a]) => n.toLowerCase() === lc || a.toLowerCase() === lc);
+  return hit ? { name: hit[0], abbr: hit[1] } : { name: r, abbr: '' };
+}
+/* Words that, in front of our town's name, make it a *different* town.
+   "Wayne" vs "Fort Wayne"; "Orange" vs "West Orange". */
+const LEAD_QUALIFIERS = new Set(['fort', 'ft', 'west', 'east', 'north', 'south', 'new', 'old',
+  'lake', 'mount', 'mt', 'port', 'saint', 'st', 'upper', 'lower', 'big', 'little', 'glen',
+  'cape', 'castle', 'white', 'green', 'grand', 'high', 'long', 'red', 'black']);
+const rxEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/* true when the text names our town in its own right, rather than only as part
+   of a longer place name */
+function namesOwnTown(text, place){
+  const rx = new RegExp('([a-z]+\\.?\\s+)?\\b' + rxEsc(place.toLowerCase()) + '\\b', 'g');
+  let m, seen = false, standalone = false;
+  while((m = rx.exec(text))){
+    seen = true;
+    const prev = (m[1] || '').trim().replace(/\.$/, '');
+    if(!LEAD_QUALIFIERS.has(prev)) standalone = true;
+  }
+  return { seen, standalone };
+}
+function newsVerdict(text, place, forms){
+  const t = text.toLowerCase();
+  const own = namesOwnTown(t, place);
+  // every mention was "Fort Wayne"-style → a different town entirely
+  if(own.seen && !own.standalone) return 'wrong-town';
+  const ourName = forms.name.toLowerCase();
+  const mentionsOurs = !!ourName &&
+    (t.includes(ourName) || (forms.abbr && new RegExp('\\b' + forms.abbr + '\\b', 'i').test(text)));
+  if(mentionsOurs) return 'strong';
+  // names some other state/province and never ours → almost certainly elsewhere
+  const other = regionPairs().some(([n]) => {
+    const nl = n.toLowerCase();
+    return nl !== ourName && nl !== place.toLowerCase() && t.includes(nl);
+  });
+  return other ? 'wrong-region' : 'weak';
+}
 app.get('/api/news', async (req, res) => {
   try{
     const q = String(req.query.q || '').slice(0, 80);
     const cc = req.query.country === 'CA' ? 'CA' : 'US';
     if(!q) return res.status(400).json({ error: 'q required' });
+    const forms = regionForms(req.query.region);
+    // quoting both terms makes Google AND them, which alone kills most wrong-state hits
+    const search = forms.name ? `"${q}" "${forms.name}"` : `"${q}" local news`;
     const feed = 'https://news.google.com/rss/search' +
-      `?q=${encodeURIComponent('"' + q + '" local news')}&hl=en-${cc}&gl=${cc}&ceid=${cc}:en`;
-    const xml = await cached('news:' + feed, 15 * 60e3, async () => {
+      `?q=${encodeURIComponent(search)}&hl=en-${cc}&gl=${cc}&ceid=${cc}:en`;
+    const xml = await cached('news2:' + feed, 15 * 60e3, async () => {
       const rr = await fetch(feed);
       if(!rr.ok) throw new Error('feed HTTP ' + rr.status);
       return rr.text();
@@ -292,11 +400,21 @@ app.get('/api/news', async (req, res) => {
     };
     const rx = /<item>([\s\S]*?)<\/item>/g;
     let m;
-    while((m = rx.exec(xml)) && items.length < 12){
-      items.push({ title: pick(m[1], 'title'), link: pick(m[1], 'link'),
-                   pub: pick(m[1], 'pubDate'), src: pick(m[1], 'source') });
+    while((m = rx.exec(xml)) && items.length < 24){
+      const it = { title: pick(m[1], 'title'), link: pick(m[1], 'link'),
+                   pub: pick(m[1], 'pubDate'), src: pick(m[1], 'source') };
+      it.verdict = newsVerdict(it.title + ' ' + it.src, q, forms);
+      items.push(it);
     }
-    res.json({ items });
+    /* Only ever drop stories positively identified as somewhere else. A local
+       story from a local outlet often names neither the state nor the abbrev
+       ("Wayne council approves park - NorthJersey.com") — that is weak evidence,
+       not wrong evidence, so it stays; it just ranks below a confirmed match. */
+    const rank = { strong: 0, weak: 1 };
+    const kept = items.filter(i => i.verdict === 'strong' || i.verdict === 'weak')
+      .sort((a, b) => rank[a.verdict] - rank[b.verdict])
+      .slice(0, 12).map(({ verdict, ...rest }) => rest);
+    res.json({ items: kept, dropped: items.length - kept.length });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
