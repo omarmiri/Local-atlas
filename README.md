@@ -9,7 +9,7 @@ town marker to explore it the same way. A separate **US Ranks** panel scores all
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v5.4**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v5.5**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ## Architecture
@@ -101,6 +101,15 @@ returns a boolean per key so you can confirm what's wired.
   between them website/phone landed on 63 of 64 results. Google ranks, Foursquare broadens. That
   split is why Foursquare stays wired in even though its premium tier is exhausted — see
   `FSQ_PREMIUM_FIELDS` above.
+- **Google's `includedTypes` matches a place's *secondary* types**, so a science centre with an
+  IMAX comes back under `movie_theater` and a hotel gym under `fitness_center`. `googOffTopic()`
+  drops a result only when another tab plainly owns its **primary** type. Two things about it are
+  load-bearing and easy to break:
+  - It is *not* "primaryType must be in the requested list". Google's restaurants carry qualified
+    primary types (`pizza_restaurant`, `soul_food_restaurant`) that appear in no list, and that
+    stricter rule empties the Eat tab. Unit cases guard this.
+  - Matching is on the **base** of a qualified type (`art_museum` → `museum`), because an exact
+    comparison let `art_museum` onto Rec while `pizza_restaurant` still had to resolve to food.
 - **Rating scales differ.** Foursquare is 0-10, Google is 0-5. The server normalises everything to
   the 0-10 `rating` field so one sort works across providers, and carries the raw Google values in
   `rating5` / `ratingCount` for display. If you add a third provider, normalise it the same way.

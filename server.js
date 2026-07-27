@@ -223,11 +223,17 @@ const GOOG_CLAIMED = new Set(Object.values(GOOG_TYPES).flat());
 const GOOG_NEVER = new Set(['hotel', 'motel', 'resort_hotel', 'extended_stay_hotel',
   'bed_and_breakfast', 'hostel', 'guest_house', 'inn', 'lodging', 'apartment_complex',
   'apartment_building', 'real_estate_agency', 'storage', 'moving_company']);
+/* Google qualifies types as <qualifier>_<base>: art_museum, pizza_restaurant,
+   grocery_store. Matching the base is what makes this hold together — an exact
+   comparison let "art_museum" through on Rec because only "museum" was listed,
+   while "pizza_restaurant" has to keep resolving to food, not be orphaned. */
+const typeIs = (pt, base) => pt === base || pt.endsWith('_' + base);
+const ownsType = (category, pt) => [...(GOOG_OWN[category] || [])].some(t => typeIs(pt, t));
 function googOffTopic(category, primaryType){
   if(!primaryType) return false;                       // unknown identity: let it through
-  if(GOOG_OWN[category]?.has(primaryType)) return false;
+  if(ownsType(category, primaryType)) return false;    // this tab's own kind, qualified or not
   if(GOOG_NEVER.has(primaryType)) return true;
-  return GOOG_CLAIMED.has(primaryType);                // another tab owns this
+  return Object.keys(GOOG_TYPES).some(c => c !== category && ownsType(c, primaryType));
 }
 function haversineMi(aLat, aLon, bLat, bLon){
   const R = 3958.8, rad = d => d * Math.PI / 180;
