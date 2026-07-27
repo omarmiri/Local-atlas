@@ -92,13 +92,18 @@ async function fsqPlaces(category, lat, lon, r){
     (withCats ? `&fsq_category_ids=${FSQ_CATS[category]}` : '') +
     (withFields ? `&fields=${encodeURIComponent(FSQ_FIELDS)}` : '');
   const data = await cached('fsqn:' + category + ':' + ll + ':' + r, 6 * 3600e3, async () => {
-    // degrade gracefully if a field or category id is rejected
+    /* Degrade if a field or category id is rejected (400) — and also on 429,
+       which Foursquare returns per-field-tier: once the premium quota for
+       rating/hours/website/tel is spent, the plain search still succeeds. Half
+       a result beats none, so drop the fields rather than the provider. */
+    let last = 0;
     for(const [wf, wc] of [[true, true], [false, true], [false, false]]){
       const rr = await fetch(mkUrl(wf, wc), { headers: FSQ_HDRS() });
       if(rr.ok) return rr.json();
-      if(rr.status !== 400) throw new Error('Foursquare HTTP ' + rr.status);
+      last = rr.status;
+      if(rr.status !== 400 && rr.status !== 429) break;
     }
-    throw new Error('Foursquare HTTP 400');
+    throw new Error('Foursquare HTTP ' + last);
   });
   return (data.results || []).map(p => ({
     fsqId: p.fsq_place_id || p.fsq_id || '',
