@@ -9,7 +9,7 @@ town marker to explore it the same way. A separate **US Ranks** panel scores all
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v5.3**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v5.4**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ## Architecture
@@ -129,6 +129,32 @@ the SKU, and this app requests `rating`, `priceLevel`, `regularOpeningHours`, `w
   spend ceiling.
 - To drop to the cheaper Pro SKU, remove the Enterprise fields from `GOOG_MASK` in `server.js` -
   you lose ratings and hours but keep names, locations, addresses, and photos.
+
+## Weather: "now" must be an observation
+
+`pt.properties.forecast` from NWS returns **12-hour periods** — "Today", "Tonight" — whose
+temperature is that block's high (daytime) or low (overnight). Rendering `periods[0]` as the
+current reading showed the day's high all afternoon and the overnight low all night. Measured
+against live station data: Denver was **12 F too high**, Seattle 8, Phoenix 6, and the condition
+text described the whole block ("Showers And Thunderstorms Likely") rather than the sky right now
+("Partly Cloudy").
+
+`nwsCurrent()` resolves "now" in this order, and the order matters:
+
+1. **Nearest station's latest observation** (`/stations/{id}/observations/latest`) — the only true
+   current reading. Walks up to 3 stations.
+2. **Hourly forecast** (`forecastHourly`) — current-hour model value.
+3. The 12-hour period, last resort, i.e. the old behaviour.
+
+Two guards are load-bearing, both confirmed against live data:
+
+- **A station can return `temperature.value: null`.** Honolulu's two nearest stations (PHNL, PHNG)
+  both did; the third gave 78 F. Without the null check, `Math.round(null * 9/5 + 32)` yields a
+  perfectly plausible **32 F in Hawaii**. Never arithmetic on an unchecked observation value.
+- **Observations older than 3 h are rejected**, so a station that quietly stopped reporting falls
+  through to the hourly forecast instead of pinning a stale number.
+
+Weather is also re-fetched after 10 minutes on a page left open — "current" has to mean current.
 
 ## Census geography (town-level stats)
 

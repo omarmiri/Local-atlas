@@ -702,7 +702,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v5.3</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v5.4</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -1219,14 +1219,67 @@ const WMO = {0:'Clear',1:'Mostly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',
   71:'Light snow',73:'Snow',75:'Heavy snow',77:'Snow grains',80:'Rain showers',81:'Rain showers',
   82:'Violent rain showers',85:'Snow showers',86:'Heavy snow showers',95:'Thunderstorm',
   96:'Thunderstorm with hail',99:'Thunderstorm with heavy hail'};
+/* NWS "now" must come from an observation, not the forecast.
+   pt.properties.forecast returns 12-HOUR periods — "Today", "Tonight" — whose
+   temperature is that block's high (daytime) or low (overnight). Rendering
+   periods[0] as the current reading therefore showed the day's high all
+   afternoon and the overnight low all night, never the actual temperature.
+   Order of preference: nearest station's latest observation -> hourly forecast
+   for the current hour -> the 12-hour period (last resort, clearly the worst). */
+const cToF = c => c * 9 / 5 + 32;
+const kmhToMph = k => k / 1.609;
+async function nwsCurrent(pt){
+  try{
+    const sl = await fetchJSON(pt.properties.observationStations);
+    const stations = (sl.features || []).slice(0, 3).map(f => f.id || f.properties?.stationIdentifier);
+    for(const st of stations){
+      if(!st) continue;
+      try{
+        const url = st.startsWith('http') ? st + '/observations/latest'
+                                          : `https://api.weather.gov/stations/${st}/observations/latest`;
+        const ob = await fetchJSON(url);
+        const p = ob.properties || {};
+        const tC = p.temperature?.value;
+        if(tC == null) continue;
+        // a station that stopped reporting is worse than the hourly forecast
+        const age = p.timestamp ? (Date.now() - Date.parse(p.timestamp)) : Infinity;
+        if(!(age < 3 * 3600e3)) continue;
+        const bits = [];
+        if(p.windSpeed?.value != null) bits.push(`Wind ${Math.round(kmhToMph(p.windSpeed.value))} mph`);
+        if(p.relativeHumidity?.value != null) bits.push(`${Math.round(p.relativeHumidity.value)}% humidity`);
+        if(p.heatIndex?.value != null) bits.push(`feels like ${Math.round(cToF(p.heatIndex.value))}°`);
+        else if(p.windChill?.value != null) bits.push(`feels like ${Math.round(cToF(p.windChill.value))}°`);
+        const mins = Math.round(age / 60e3);
+        bits.push(mins < 2 ? 'observed just now' : `observed ${mins} min ago`);
+        return { name:'Now', temperature: Math.round(cToF(tC)), temperatureUnit:'F',
+                 shortForecast: p.textDescription || 'Current conditions',
+                 detailedForecast: bits.join(' · ') + '.' };
+      }catch(e){ /* try the next station */ }
+    }
+  }catch(e){}
+  try{
+    const hr = await fetchJSON(pt.properties.forecastHourly);
+    const h = (hr.properties?.periods || [])[0];
+    if(h) return { name:'Now', temperature: h.temperature, temperatureUnit: h.temperatureUnit || 'F',
+                   shortForecast: h.shortForecast || 'Current conditions',
+                   detailedForecast: `Wind ${h.windSpeed || ''}${h.windDirection ? ' ' + h.windDirection : ''}. Hourly forecast.`.trim() };
+  }catch(e){}
+  return null;
+}
 async function getWeather(){
-  if(state.cache.weather) return state.cache.weather;
+  // "current" has to mean current: re-check after 10 minutes on a page left open
+  if(state.cache.weather && Date.now() - (state.cache.weatherT || 0) < 10 * 60e3) return state.cache.weather;
   const { lat, lon, country } = state.place;
   if(country !== 'CA'){
     try{
       const pt = await fetchJSON(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`);
-      const fc = await fetchJSON(pt.properties.forecast);
-      state.cache.weather = fc.properties.periods.slice(0, 6);
+      const [now, fc] = await Promise.all([
+        nwsCurrent(pt),
+        fetchJSON(pt.properties.forecast)
+      ]);
+      const periods = fc.properties.periods.slice(0, 6);
+      state.cache.weather = now ? [now, ...periods] : periods;
+      state.cache.weatherT = Date.now();
       return state.cache.weather;
     }catch(e){ /* fall through to Open-Meteo */ }
   }
@@ -1234,15 +1287,20 @@ async function getWeather(){
   const u = country === 'CA' ? 'C' : 'F';
   const d = await fetchJSON(
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&current=temperature_2m,weather_code,wind_speed_10m` +
+    `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m` +
     `&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max` +
     `&temperature_unit=${unit}&timezone=auto&forecast_days=6`);
+  const cur = d.current;
+  const curBits = [`Wind ${Math.round(cur.wind_speed_10m)} ${d.current_units?.wind_speed_10m || 'km/h'}`];
+  if(cur.relative_humidity_2m != null) curBits.push(`${Math.round(cur.relative_humidity_2m)}% humidity`);
+  if(cur.apparent_temperature != null && Math.round(cur.apparent_temperature) !== Math.round(cur.temperature_2m))
+    curBits.push(`feels like ${Math.round(cur.apparent_temperature)}°`);
   const periods = [{
     name:'Now',
-    temperature: Math.round(d.current.temperature_2m),
+    temperature: Math.round(cur.temperature_2m),
     temperatureUnit: u,
-    shortForecast: WMO[d.current.weather_code] || 'Current conditions',
-    detailedForecast: `Wind ${Math.round(d.current.wind_speed_10m)} ${d.current_units?.wind_speed_10m || 'km/h'}.`
+    shortForecast: WMO[cur.weather_code] || 'Current conditions',
+    detailedForecast: curBits.join(' · ') + '.'
   }];
   const days = d.daily;
   for(let i=0;i<days.time.length && periods.length<6;i++){
@@ -1257,6 +1315,7 @@ async function getWeather(){
     });
   }
   state.cache.weather = periods;
+  state.cache.weatherT = Date.now();
   return periods;
 }
 function renderWeather(periods){
