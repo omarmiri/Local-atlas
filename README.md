@@ -36,7 +36,8 @@ returns a boolean per key so you can confirm what's wired.
 | Variable | Enables | Notes / free tier |
 |---|---|---|
 | `GOOGLE_API_KEY` | Place ratings, reviews counts, photos, editorial blurbs, opening hours on Eat/Shop/See/Rec/Kids | **Google Places API (New).** Enable *Places API (New)* in the Cloud project and attach billing; an AI Studio / Gemini key will **not** work. Requesting `rating`, `priceLevel`, `regularOpeningHours`, `websiteUri` puts Nearby Search on the **Enterprise** SKU — see "Cost control" below. Verify with `/api/layer-test` → `google_search`. |
-| `FSQ_API_KEY` | Same enrichment, from Foursquare | **Foursquare "Service" key**, not a legacy fsq3 key. Legacy v3 API shut down May 2026; this app uses the new Places API (`places-api.foursquare.com`, `X-Places-Api-Version` header). Optional now that Google is wired in — set both and results merge, set either alone and it works, set neither and places still come from OpenStreetMap. Foursquare meters `rating`/`hours`/`website`/`tel` as a separate premium quota and returns **429 on those fields alone** once it is spent, while plain search keeps working — so `fsqPlaces()` drops the `fields` param and retries rather than losing the provider. A 429 here means quota, not rate-limiting. |
+| `FSQ_API_KEY` | Extra place **coverage** + website/phone on Eat/Shop/See/Rec/Kids | **Foursquare "Service" key**, not a legacy fsq3 key. Legacy v3 API shut down May 2026; this app uses the new Places API (`places-api.foursquare.com`, `X-Places-Api-Version` header). Supplement only — Google is the primary. Set both and results merge, set either alone and it works, set neither and places still come from OpenStreetMap. |
+| `FSQ_PREMIUM_FIELDS` | Asks Foursquare for `hours` + `rating` too | Off by default. Those two fields sit behind a **separately metered premium quota** that returns **429 on those fields alone** once spent, while plain search keeps working. Ratings now come from Google, so spending that quota buys little. Set to `1` only if you have premium quota to burn. |
 | `TICKETMASTER_API_KEY` | Events tab + "Most Happening" leaderboard | Use the **Consumer Key**, not the secret. |
 | `GEMINI_API_KEY` | AI Brief, quirky Laws, state tax summary, "Weirdest/Visit" leaderboards | Free tier at aistudio.google.com. Model defaults to `gemini-flash-lite-latest`; `GEMINI_MODEL` overrides. |
 | `OPENWEATHER_API_KEY` | Clouds + Temperature map layers | Free tier is ~3 h delayed and 60 calls/min. Server caps at 50/min, caches tiles 45 min, and limits native zoom to stay under the limit. New keys can take ~2 h to activate. |
@@ -89,9 +90,17 @@ returns a boolean per key so you can confirm what's wired.
   ratings/price/photos, then offer Nearest / Top-rated sort. OSM finds places; the commercial
   providers rank them.
 - `/api/places?lat=&lon=&radius=&category=` queries every configured provider in parallel and
-  merges them server-side on normalised name before the browser sees anything. Google wins ties
-  (fresher hours and ratings); Foursquare fills the gaps. Add `&provider=google` or
-  `&provider=fsq` to isolate one provider when debugging.
+  merges them server-side on normalised name before the browser sees anything. Add
+  `&provider=google` or `&provider=fsq` to isolate one provider when debugging.
+- **Google is the primary; Foursquare is a best-effort supplement.** Google is listed first so it
+  wins every merge tie, and it gets a 10 s deadline against Foursquare's 6 s — a slow or hung
+  Foursquare can never hold up a response Google already answered. A timed-out call still
+  finishes into the cache, so it costs latency once, not the result.
+- **The two providers do different jobs.** Measured on one Chicago `food` lookup: Google returned
+  20 places and *all* 20 ratings; Foursquare returned 44 more places Google didn't have, and
+  between them website/phone landed on 63 of 64 results. Google ranks, Foursquare broadens. That
+  split is why Foursquare stays wired in even though its premium tier is exhausted — see
+  `FSQ_PREMIUM_FIELDS` above.
 - **Rating scales differ.** Foursquare is 0-10, Google is 0-5. The server normalises everything to
   the 0-10 `rating` field so one sort works across providers, and carries the raw Google values in
   `rating5` / `ratingCount` for display. If you add a third provider, normalise it the same way.

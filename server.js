@@ -85,20 +85,30 @@ const FSQ_CATS = {
   shopping:    '4d4b7105d754a06378d81259',                          // retail
   kids:        '4d4b7104d754a06370d81259'                           // arts & entertainment
 };
-const FSQ_FIELDS = 'fsq_place_id,name,latitude,longitude,location,categories,distance,website,tel,hours,rating';
+/* Foursquare's role here is coverage and contact details, not ratings.
+   `hours` and `rating` sit behind a separately-metered premium quota that 429s
+   on those fields alone once spent; everything below is free and, measured on
+   a Chicago lookup, supplies ~3x more places than Google plus website/phone on
+   nearly all of them. Google supplies the ratings, so we don't ask for the
+   premium tier unless FSQ_PREMIUM_FIELDS=1 says the quota is worth spending. */
+const FSQ_CORE = 'fsq_place_id,name,latitude,longitude,location,categories,distance,website,tel';
+const FSQ_PREMIUM = 'hours,rating';
+const FSQ_WANT_PREMIUM = process.env.FSQ_PREMIUM_FIELDS === '1';
 async function fsqPlaces(category, lat, lon, r){
   const ll = `${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}`;
-  const mkUrl = (withFields, withCats) => `${FSQ_BASE}/places/search?ll=${ll}&radius=${r}&limit=50` +
+  const mkUrl = (fields, withCats) => `${FSQ_BASE}/places/search?ll=${ll}&radius=${r}&limit=50` +
     (withCats ? `&fsq_category_ids=${FSQ_CATS[category]}` : '') +
-    (withFields ? `&fields=${encodeURIComponent(FSQ_FIELDS)}` : '');
-  const data = await cached('fsqn:' + category + ':' + ll + ':' + r, 6 * 3600e3, async () => {
-    /* Degrade if a field or category id is rejected (400) — and also on 429,
-       which Foursquare returns per-field-tier: once the premium quota for
-       rating/hours/website/tel is spent, the plain search still succeeds. Half
-       a result beats none, so drop the fields rather than the provider. */
+    (fields ? `&fields=${encodeURIComponent(fields)}` : '');
+  // widest tier first, each fallback asking for strictly less
+  const tiers = FSQ_WANT_PREMIUM
+    ? [[FSQ_CORE + ',' + FSQ_PREMIUM, true], [FSQ_CORE, true], ['', true], ['', false]]
+    : [[FSQ_CORE, true], ['', true], ['', false]];
+  const data = await cached('fsqb:' + category + ':' + ll + ':' + r, 6 * 3600e3, async () => {
+    // 400 = a field/category id was rejected, 429 = that field tier is spent;
+    // both are recoverable by asking for less, so drop fields, not the provider
     let last = 0;
-    for(const [wf, wc] of [[true, true], [false, true], [false, false]]){
-      const rr = await fetch(mkUrl(wf, wc), { headers: FSQ_HDRS() });
+    for(const [fields, wc] of tiers){
+      const rr = await fetch(mkUrl(fields, wc), { headers: FSQ_HDRS() });
       if(rr.ok) return rr.json();
       last = rr.status;
       if(rr.status !== 400 && rr.status !== 429) break;
@@ -208,6 +218,16 @@ async function googPlaces(category, lat, lon, r){
   }).filter(p => p.lat != null && p.name);
 }
 
+/* Cap a best-effort provider call. The underlying promise keeps running and
+   still populates the cache, so a timeout costs latency once, not the result. */
+function withDeadline(p, ms, label){
+  let t;
+  return Promise.race([
+    p.finally(() => clearTimeout(t)),
+    new Promise((_, rej) => { t = setTimeout(() => rej(new Error(label + ' timed out')), ms); })
+  ]);
+}
+
 /* Merge providers on normalised name: Google wins ties (fresher hours/ratings),
    Foursquare fills in whatever Google didn't return. */
 const normName = n => String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -236,10 +256,14 @@ app.get('/api/places', async (req, res) => {
     if(!lat || !lon || !FSQ_CATS[category]) return res.status(400).json({ error: 'bad params' });
     const r = Math.min(parseInt(radius, 10) || 7000, 100000);
     const want = p => provider === 'both' || provider === p;
+    /* Google is the primary: it is listed first so it wins every merge tie, and
+       it gets the longer deadline. Foursquare is a best-effort supplement for
+       coverage and contact details — it has been the flaky one, so a slow or
+       hung Foursquare must never hold up a response Google already answered.
+       The losing request still finishes into the cache, so it isn't wasted. */
     const jobs = [];
-    // Google first so it wins the merge
-    if(GOOG && want('google')) jobs.push(googPlaces(category, lat, lon, r));
-    if(FSQ && want('fsq'))     jobs.push(fsqPlaces(category, lat, lon, r));
+    if(GOOG && want('google')) jobs.push(withDeadline(googPlaces(category, lat, lon, r), 10000, 'Google Places'));
+    if(FSQ && want('fsq'))     jobs.push(withDeadline(fsqPlaces(category, lat, lon, r), 6000, 'Foursquare'));
     if(!jobs.length) return res.status(503).json({ error: 'provider not configured' });
     const settled = await Promise.allSettled(jobs);
     const lists = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
