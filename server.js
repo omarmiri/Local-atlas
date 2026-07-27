@@ -1,7 +1,8 @@
 /* Local Atlas backend
    - Serves the static app
-   - /api/places : Foursquare Places (key from FSQ_API_KEY env var — set in
-     Render's Environment tab; never committed to the repo)
+   - /api/places : Google Places (New) + Foursquare Places, merged. Keys come
+     from GOOGLE_API_KEY / FSQ_API_KEY env vars — set in Render's Environment
+     tab; never committed to the repo. Either provider alone is enough.
    - /api/news   : Google News RSS fetched server-side (no CORS proxies)
    - /api/reddit : Reddit search fetched server-side
    - /api/fetch  : generic page fetch for the deals scanner
@@ -13,6 +14,7 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 10000;
 const FSQ = process.env.FSQ_API_KEY || '';
+const GOOG = process.env.GOOGLE_API_KEY || '';
 const TM = process.env.TICKETMASTER_API_KEY || '';
 const CENSUS = process.env.CENSUS_API_KEY || '';
 const AI = process.env.GEMINI_API_KEY || '';
@@ -68,7 +70,7 @@ async function cached(key, ttlMs, fn){
   return v;
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS, windy: !!WINDY, nasa: !!NASA }));
+app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, goog: !!GOOG, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS, windy: !!WINDY, nasa: !!NASA }));
 
 /* ---- Foursquare places ---- */
 /* Legacy v3 was shut down May 15 2026 — this is the new Places API.
@@ -84,41 +86,160 @@ const FSQ_CATS = {
   kids:        '4d4b7104d754a06370d81259'                           // arts & entertainment
 };
 const FSQ_FIELDS = 'fsq_place_id,name,latitude,longitude,location,categories,distance,website,tel,hours,rating';
+async function fsqPlaces(category, lat, lon, r){
+  const ll = `${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}`;
+  const mkUrl = (withFields, withCats) => `${FSQ_BASE}/places/search?ll=${ll}&radius=${r}&limit=50` +
+    (withCats ? `&fsq_category_ids=${FSQ_CATS[category]}` : '') +
+    (withFields ? `&fields=${encodeURIComponent(FSQ_FIELDS)}` : '');
+  const data = await cached('fsqn:' + category + ':' + ll + ':' + r, 6 * 3600e3, async () => {
+    // degrade gracefully if a field or category id is rejected
+    for(const [wf, wc] of [[true, true], [false, true], [false, false]]){
+      const rr = await fetch(mkUrl(wf, wc), { headers: FSQ_HDRS() });
+      if(rr.ok) return rr.json();
+      if(rr.status !== 400) throw new Error('Foursquare HTTP ' + rr.status);
+    }
+    throw new Error('Foursquare HTTP 400');
+  });
+  return (data.results || []).map(p => ({
+    fsqId: p.fsq_place_id || p.fsq_id || '',
+    name: p.name,
+    kind: (p.categories?.[0]?.name || '').toLowerCase(),
+    lat: p.latitude ?? p.geocodes?.main?.latitude,
+    lon: p.longitude ?? p.geocodes?.main?.longitude,
+    dist: (p.distance || 0) / 1609,
+    website: p.website || '',
+    phone: p.tel || '',
+    hours: p.hours?.display || '',
+    openNow: typeof p.hours?.open_now === 'boolean' ? p.hours.open_now : null,
+    addr: p.location?.formatted_address || '',
+    rating: p.rating ?? null,
+    src: 'fsq'
+  })).filter(p => p.lat != null && p.name);
+}
+
+/* ---- Google Places (New) ----
+   Nearby Search is a POST with an explicit X-Goog-FieldMask; the mask decides
+   both the payload and the billing SKU, so keep it to what the UI actually
+   renders. Ratings come back on a 0-5 scale — normalised to Foursquare's 0-10
+   below so both providers sort in one list. */
+const GOOG_BASE = 'https://places.googleapis.com/v1';
+/* Table A place types, grouped to match this app's tabs. The first entry of
+   each list is the "core" type used if Google rejects one of the others. */
+const GOOG_TYPES = {
+  services:    ['bank', 'pharmacy', 'post_office', 'gas_station', 'car_repair', 'hair_salon', 'veterinary_care', 'hospital', 'library'],
+  attractions: ['tourist_attraction', 'museum', 'art_gallery', 'park', 'zoo', 'aquarium', 'historical_landmark'],
+  food:        ['restaurant', 'cafe', 'bar', 'bakery', 'meal_takeaway'],
+  shopping:    ['store', 'shopping_mall', 'supermarket', 'clothing_store', 'department_store', 'book_store', 'hardware_store'],
+  kids:        ['playground', 'amusement_park', 'amusement_center', 'water_park', 'zoo', 'aquarium']
+};
+const GOOG_MASK = [
+  'places.id', 'places.displayName', 'places.location', 'places.formattedAddress',
+  'places.primaryTypeDisplayName', 'places.types', 'places.rating', 'places.userRatingCount',
+  'places.priceLevel', 'places.websiteUri', 'places.nationalPhoneNumber', 'places.regularOpeningHours'
+].join(',');
+const GOOG_PRICE = { PRICE_LEVEL_FREE: 1, PRICE_LEVEL_INEXPENSIVE: 1, PRICE_LEVEL_MODERATE: 2,
+  PRICE_LEVEL_EXPENSIVE: 3, PRICE_LEVEL_VERY_EXPENSIVE: 4 };
+/* Google returns a useful reason in the body ("API key not valid", "type X is
+   not supported", "Places API has not been used in project…") — HTTP 400 alone
+   tells you nothing, and this is the one thing you can't test without a key. */
+async function googErr(rr){
+  try{
+    const j = JSON.parse(await rr.text());
+    return `HTTP ${rr.status} ${j.error?.status || ''} ${j.error?.message || ''}`.trim();
+  }catch(e){ return 'HTTP ' + rr.status; }
+}
+function haversineMi(aLat, aLon, bLat, bLon){
+  const R = 3958.8, rad = d => d * Math.PI / 180;
+  const dLa = rad(bLat - aLat), dLo = rad(bLon - aLon);
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+async function googPlaces(category, lat, lon, r){
+  const types = GOOG_TYPES[category];
+  const rad = Math.min(r, 50000);                      // Google caps the circle at 50 km
+  const key = `gpl:${category}:${(+lat).toFixed(4)},${(+lon).toFixed(4)}:${rad}`;
+  const data = await cached(key, 6 * 3600e3, async () => {
+    // retry with just the core type if Google rejects one of the others
+    let last = '';
+    for(const list of [types, types.slice(0, 1)]){
+      const rr = await fetch(`${GOOG_BASE}/places:searchNearby`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOG, 'X-Goog-FieldMask': GOOG_MASK },
+        body: JSON.stringify({
+          includedTypes: list,
+          maxResultCount: 20,                          // hard API maximum
+          rankPreference: 'POPULARITY',
+          locationRestriction: { circle: { center: { latitude: +lat, longitude: +lon }, radius: rad } }
+        })
+      });
+      if(rr.ok) return rr.json();
+      last = await googErr(rr);
+      // a bad key / disabled API / billing problem won't improve on retry
+      if(rr.status !== 400 || /API key|not enabled|billing|PERMISSION/i.test(last)) break;
+    }
+    throw new Error('Google Places: ' + last);
+  });
+  const today = new Date().getDay();                   // 0 = Sunday; Google lists Monday first
+  return (data.places || []).map(p => {
+    const la = p.location?.latitude, lo = p.location?.longitude;
+    const days = p.regularOpeningHours?.weekdayDescriptions || [];
+    return {
+      gid: p.id || '',
+      name: p.displayName?.text || '',
+      kind: (p.primaryTypeDisplayName?.text || (p.types || [])[0] || '').replaceAll('_', ' ').toLowerCase(),
+      lat: la, lon: lo,
+      dist: la == null ? 0 : haversineMi(+lat, +lon, la, lo),
+      website: p.websiteUri || '',
+      phone: p.nationalPhoneNumber || '',
+      hours: days[(today + 6) % 7] || '',
+      openNow: typeof p.regularOpeningHours?.openNow === 'boolean' ? p.regularOpeningHours.openNow : null,
+      addr: p.formattedAddress || '',
+      rating: p.rating != null ? Math.round(p.rating * 20) / 10 : null,   // 0-5 → 0-10
+      rating5: p.rating ?? null,
+      ratingCount: p.userRatingCount ?? null,
+      price: GOOG_PRICE[p.priceLevel] ?? null,
+      src: 'goog'
+    };
+  }).filter(p => p.lat != null && p.name);
+}
+
+/* Merge providers on normalised name: Google wins ties (fresher hours/ratings),
+   Foursquare fills in whatever Google didn't return. */
+const normName = n => String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
+function mergePlaces(lists){
+  const out = [], byName = new Map();
+  for(const list of lists){
+    for(const it of list){
+      const k = normName(it.name);
+      const prev = byName.get(k);
+      if(!prev){ byName.set(k, it); out.push(it); continue; }
+      for(const f of ['website', 'phone', 'hours', 'addr', 'kind', 'fsqId', 'gid']){
+        if(!prev[f] && it[f]) prev[f] = it[f];
+      }
+      for(const f of ['rating', 'price', 'openNow', 'rating5', 'ratingCount']){
+        if(prev[f] == null && it[f] != null) prev[f] = it[f];
+      }
+    }
+  }
+  return out.sort((a, b) => a.dist - b.dist);
+}
+
 app.get('/api/places', async (req, res) => {
   try{
-    if(!FSQ) return res.status(503).json({ error: 'FSQ_API_KEY not set' });
-    const { lat, lon, radius = '7000', category = 'food' } = req.query;
+    if(!FSQ && !GOOG) return res.status(503).json({ error: 'no places key set (GOOGLE_API_KEY or FSQ_API_KEY)' });
+    const { lat, lon, radius = '7000', category = 'food', provider = 'both' } = req.query;
     if(!lat || !lon || !FSQ_CATS[category]) return res.status(400).json({ error: 'bad params' });
     const r = Math.min(parseInt(radius, 10) || 7000, 100000);
-    const ll = `${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}`;
-    const mkUrl = (withFields, withCats) => `${FSQ_BASE}/places/search?ll=${ll}&radius=${r}&limit=50` +
-      (withCats ? `&fsq_category_ids=${FSQ_CATS[category]}` : '') +
-      (withFields ? `&fields=${encodeURIComponent(FSQ_FIELDS)}` : '');
-    const data = await cached('fsqn:' + category + ':' + ll + ':' + r, 6 * 3600e3, async () => {
-      // degrade gracefully if a field or category id is rejected
-      for(const [wf, wc] of [[true, true], [false, true], [false, false]]){
-        const rr = await fetch(mkUrl(wf, wc), { headers: FSQ_HDRS() });
-        if(rr.ok) return rr.json();
-        if(rr.status !== 400) throw new Error('Foursquare HTTP ' + rr.status);
-      }
-      throw new Error('Foursquare HTTP 400');
-    });
-    const items = (data.results || []).map(p => ({
-      fsqId: p.fsq_place_id || p.fsq_id || '',
-      name: p.name,
-      kind: (p.categories?.[0]?.name || '').toLowerCase(),
-      lat: p.latitude ?? p.geocodes?.main?.latitude,
-      lon: p.longitude ?? p.geocodes?.main?.longitude,
-      dist: (p.distance || 0) / 1609,
-      website: p.website || '',
-      phone: p.tel || '',
-      hours: p.hours?.display || '',
-      openNow: typeof p.hours?.open_now === 'boolean' ? p.hours.open_now : null,
-      addr: p.location?.formatted_address || '',
-      rating: p.rating ?? null,
-      src: 'fsq'
-    })).filter(p => p.lat != null && p.name);
-    res.json({ items });
+    const want = p => provider === 'both' || provider === p;
+    const jobs = [];
+    // Google first so it wins the merge
+    if(GOOG && want('google')) jobs.push(googPlaces(category, lat, lon, r));
+    if(FSQ && want('fsq'))     jobs.push(fsqPlaces(category, lat, lon, r));
+    if(!jobs.length) return res.status(503).json({ error: 'provider not configured' });
+    const settled = await Promise.allSettled(jobs);
+    const lists = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
+    if(!lists.length) throw new Error(settled.map(s => String(s.reason?.message || s.reason)).join('; '));
+    res.json({ items: mergePlaces(lists) });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
@@ -519,29 +640,72 @@ app.get('/api/census', async (req, res) => {
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
-/* ---- Foursquare place details (photo, rating, price) ---- */
+/* ---- place details (photo, rating, price, blurb) — Foursquare or Google ---- */
+async function fsqDetails(id){
+  return cached('fdn:' + id, 86400e3, async () => {
+    const out = { rating: null, price: null, photo: '', blurb: '', src: 'fsq' };
+    try{
+      const rr = await fetch(`${FSQ_BASE}/places/${id}?fields=rating%2Cprice`, { headers: FSQ_HDRS() });
+      if(rr.ok){ const j = await rr.json(); out.rating = j.rating ?? null; out.price = j.price ?? null; }
+    }catch(e){}
+    try{
+      const pr = await fetch(`${FSQ_BASE}/places/${id}/photos?limit=1`, { headers: FSQ_HDRS() });
+      if(pr.ok){
+        const ph = await pr.json();
+        const first = Array.isArray(ph) ? ph[0] : ph?.photos?.[0];
+        if(first?.prefix) out.photo = first.prefix + '500x300' + first.suffix;
+      }
+    }catch(e){}
+    return out;
+  });
+}
+/* Google photo URLs are minted per request and carry the API key, so resolve
+   them server-side with skipHttpRedirect and hand the browser the plain URI. */
+const GOOG_DETAIL_MASK = 'id,rating,userRatingCount,priceLevel,editorialSummary,photos';
+async function googDetails(id){
+  return cached('gdn:' + id, 86400e3, async () => {
+    const out = { rating: null, rating5: null, ratingCount: null, price: null, photo: '', blurb: '', src: 'goog' };
+    const rr = await fetch(`${GOOG_BASE}/places/${encodeURIComponent(id)}`, {
+      headers: { 'X-Goog-Api-Key': GOOG, 'X-Goog-FieldMask': GOOG_DETAIL_MASK } });
+    if(!rr.ok) throw new Error('Google Places: ' + await googErr(rr));
+    const j = await rr.json();
+    out.rating5 = j.rating ?? null;
+    out.rating = j.rating != null ? Math.round(j.rating * 20) / 10 : null;
+    out.ratingCount = j.userRatingCount ?? null;
+    out.price = GOOG_PRICE[j.priceLevel] ?? null;
+    out.blurb = j.editorialSummary?.text || '';
+    const photo = (j.photos || [])[0];
+    if(photo?.name){
+      try{
+        const pr = await fetch(`${GOOG_BASE}/${photo.name}/media?maxWidthPx=500&skipHttpRedirect=true`,
+          { headers: { 'X-Goog-Api-Key': GOOG } });
+        if(pr.ok) out.photo = (await pr.json()).photoUri || '';
+      }catch(e){}
+    }
+    return out;
+  });
+}
+app.get('/api/placedetails', async (req, res) => {
+  try{
+    const src = req.query.src === 'goog' ? 'goog' : 'fsq';
+    const id = String(req.query.id || '');
+    if(!id) return res.status(400).json({ error: 'id required' });
+    if(src === 'goog'){
+      if(!GOOG) return res.status(503).json({ error: 'GOOGLE_API_KEY not set' });
+      if(!/^[\w-]+$/.test(id)) return res.status(400).json({ error: 'bad id' });
+      return res.json(await googDetails(id));
+    }
+    if(!FSQ) return res.status(503).json({ error: 'FSQ_API_KEY not set' });
+    res.json(await fsqDetails(id.replace(/[^\w]/g, '')));
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+/* legacy path — cached frontends from before the Google split still call this */
 app.get('/api/fsqdetails', async (req, res) => {
   try{
     if(!FSQ) return res.status(503).json({ error: 'FSQ_API_KEY not set' });
     const id = String(req.query.id || '').replace(/[^\w]/g, '');
     if(!id) return res.status(400).json({ error: 'id required' });
-    const data = await cached('fdn:' + id, 86400e3, async () => {
-      const out = { rating: null, price: null, photo: '' };
-      try{
-        const rr = await fetch(`${FSQ_BASE}/places/${id}?fields=rating%2Cprice`, { headers: FSQ_HDRS() });
-        if(rr.ok){ const j = await rr.json(); out.rating = j.rating ?? null; out.price = j.price ?? null; }
-      }catch(e){}
-      try{
-        const pr = await fetch(`${FSQ_BASE}/places/${id}/photos?limit=1`, { headers: FSQ_HDRS() });
-        if(pr.ok){
-          const ph = await pr.json();
-          const first = Array.isArray(ph) ? ph[0] : ph?.photos?.[0];
-          if(first?.prefix) out.photo = first.prefix + '500x300' + first.suffix;
-        }
-      }catch(e){}
-      return out;
-    });
-    res.json(data);
+    res.json(await fsqDetails(id));
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
@@ -738,6 +902,12 @@ app.get('/api/layer-test', async (req, res) => {
     probe('gibs_fires', `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Thermal_Anomalies_375m_All/default/${yesterday}/GoogleMapsCompatible_Level8/4/5/4.png`),
     OWM ? probe('owm_clouds', `https://tile.openweathermap.org/map/clouds_new/4/4/5.png?appid=${OWM}`) : Promise.resolve(out.owm_clouds = { error: 'no key' }),
     FSQ ? probe('fsq_search', `${FSQ_BASE}/places/search?ll=42.33%2C-83.05&radius=1000&limit=1`, { headers: FSQ_HDRS() }) : Promise.resolve(out.fsq_search = { error: 'no key' }),
+    GOOG ? probe('google_search', `${GOOG_BASE}/places:searchNearby`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOG, 'X-Goog-FieldMask': 'places.id,places.displayName' },
+      body: JSON.stringify({ includedTypes: ['restaurant'], maxResultCount: 1,
+        locationRestriction: { circle: { center: { latitude: 42.33, longitude: -83.05 }, radius: 1000 } } })
+    }) : Promise.resolve(out.google_search = { error: 'no key' }),
     probe('rainviewer_meta', 'https://api.rainviewer.com/public/weather-maps.json')
   ]);
   res.json(out);

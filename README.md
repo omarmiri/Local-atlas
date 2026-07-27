@@ -9,7 +9,7 @@ town marker to explore it the same way. A separate **US Ranks** panel scores all
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v4.3**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v5.3**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ## Architecture
@@ -35,7 +35,8 @@ returns a boolean per key so you can confirm what's wired.
 
 | Variable | Enables | Notes / free tier |
 |---|---|---|
-| `FSQ_API_KEY` | Place ratings, photos, richer coverage on Eat/Shop/See/Rec | **Foursquare "Service" key**, not a legacy fsq3 key. Legacy v3 API shut down May 2026; this app uses the new Places API (`places-api.foursquare.com`, `X-Places-Api-Version` header). Without it, places still come from OpenStreetMap. |
+| `GOOGLE_API_KEY` | Place ratings, reviews counts, photos, editorial blurbs, opening hours on Eat/Shop/See/Rec/Kids | **Google Places API (New).** Enable *Places API (New)* in the Cloud project and attach billing; an AI Studio / Gemini key will **not** work. Requesting `rating`, `priceLevel`, `regularOpeningHours`, `websiteUri` puts Nearby Search on the **Enterprise** SKU — see "Cost control" below. Verify with `/api/layer-test` → `google_search`. |
+| `FSQ_API_KEY` | Same enrichment, from Foursquare | **Foursquare "Service" key**, not a legacy fsq3 key. Legacy v3 API shut down May 2026; this app uses the new Places API (`places-api.foursquare.com`, `X-Places-Api-Version` header). Optional now that Google is wired in — set both and results merge, set either alone and it works, set neither and places still come from OpenStreetMap. |
 | `TICKETMASTER_API_KEY` | Events tab + "Most Happening" leaderboard | Use the **Consumer Key**, not the secret. |
 | `GEMINI_API_KEY` | AI Brief, quirky Laws, state tax summary, "Weirdest/Visit" leaderboards | Free tier at aistudio.google.com. Model defaults to `gemini-flash-lite-latest`; `GEMINI_MODEL` overrides. |
 | `OPENWEATHER_API_KEY` | Clouds + Temperature map layers | Free tier is ~3 h delayed and 60 calls/min. Server caps at 50/min, caches tiles 45 min, and limits native zoom to stay under the limit. New keys can take ~2 h to activate. |
@@ -84,8 +85,19 @@ returns a boolean per key so you can confirm what's wired.
 
 ## Place data & caching model
 
-- Place tabs merge **OpenStreetMap** (coverage) with **Foursquare** ratings/price/photos, then
-  offer Nearest / Top-rated sort. OSM finds places; Foursquare ranks them.
+- Place tabs merge **OpenStreetMap** (coverage) with **Google Places** and/or **Foursquare**
+  ratings/price/photos, then offer Nearest / Top-rated sort. OSM finds places; the commercial
+  providers rank them.
+- `/api/places?lat=&lon=&radius=&category=` queries every configured provider in parallel and
+  merges them server-side on normalised name before the browser sees anything. Google wins ties
+  (fresher hours and ratings); Foursquare fills the gaps. Add `&provider=google` or
+  `&provider=fsq` to isolate one provider when debugging.
+- **Rating scales differ.** Foursquare is 0-10, Google is 0-5. The server normalises everything to
+  the 0-10 `rating` field so one sort works across providers, and carries the raw Google values in
+  `rating5` / `ratingCount` for display. If you add a third provider, normalise it the same way.
+- `/api/placedetails?src=goog|fsq&id=` fetches the photo, price, review count, and (Google only)
+  editorial blurb when a card is expanded. `/api/fsqdetails` is kept as a legacy alias because
+  service-worker-cached frontends still call it.
 - Leaderboards and AI features (Laws, Cost's tax block, Weirdest, Visit) are computed **once per
   location/period** and cached server-side, shared across all users. With Redis they survive
   restarts. The server pre-warms the three leaderboards and all 50 state law sets on boot.
@@ -93,6 +105,21 @@ returns a boolean per key so you can confirm what's wired.
   (e.g. census went `cs:` -> `cs6:`). Otherwise stale entries are served indefinitely and the fix
   appears not to work. This has bitten us repeatedly - it is the first thing to check when a data
   fix "doesn't deploy."
+
+### Cost control (Google Places)
+
+Google Places is **not free** the way the rest of this app's providers are. The field mask decides
+the SKU, and this app requests `rating`, `priceLevel`, `regularOpeningHours`, `websiteUri`, and
+`nationalPhoneNumber` — all **Enterprise**-tier fields. Budget accordingly:
+
+- One place lookup costs **5 Nearby Search calls** (one per category bucket), not one.
+- Results are cached **6 h** per `category x coordinate(4dp) x radius`, in memory *and* in Redis
+  when configured. **Set up Upstash** - without it every free-tier spin-down re-bills every lookup.
+- Place details are cached **24 h** per place id and only fire when a user expands a card.
+- Set a **budget alert and a quota cap** in the Cloud console. Nothing in this app enforces a
+  spend ceiling.
+- To drop to the cheaper Pro SKU, remove the Enterprise fields from `GOOG_MASK` in `server.js` -
+  you lose ratings and hours but keep names, locations, addresses, and photos.
 
 ## Census geography (town-level stats)
 

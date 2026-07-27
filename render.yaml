@@ -5,5 +5,7 @@ services:
     buildCommand: npm install
     startCommand: npm start
     envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
       - key: FSQ_API_KEY
         sync: false

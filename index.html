@@ -702,7 +702,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v5.2</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v5.3</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -851,9 +851,9 @@ state.backendP = (async ()=>{
     const ctl = new AbortController();
     setTimeout(()=>ctl.abort(), 4000);
     const r = await fetch('/api/health', { signal: ctl.signal });
-    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy, nasa:!!j.nasa }; }
+    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, goog:!!j.goog, places:!!(j.fsq||j.goog), tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy, nasa:!!j.nasa }; }
   }catch(e){}
-  return { ok:false, fsq:false, tm:false, ai:false, owm:false, windy:false, nasa:false };
+  return { ok:false, fsq:false, goog:false, places:false, tm:false, ai:false, owm:false, windy:false, nasa:false };
 })();
 
 /* ---------------- map ---------------- */
@@ -1479,7 +1479,7 @@ function getAllPOIs(){
   const { lat, lon } = state.place;
   const promise = (async ()=>{
     // warm local cache: same spot + radius within 24 h loads instantly
-    const lsKey = `poiv6:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
+    const lsKey = `poiv7:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
     try{
       const c = JSON.parse(localStorage.getItem(lsKey) || 'null');
       if(c && Date.now() - c.t < 864e5) return c.b;
@@ -1489,10 +1489,10 @@ function getAllPOIs(){
       overpassQuery(buildCombinedQuery(lat, lon, state.radiusM))
         .then(d=>bucketize(d.elements)).catch(()=>null)
     ];
-    if(be.fsq) tasks.push(fetchFSQBuckets(lat, lon, state.radiusM).catch(()=>null));
-    const [osmB, fsqB] = await Promise.all(tasks);
-    if(!osmB && !fsqB) throw new Error('places services unavailable');
-    const b = mergeBuckets(osmB, fsqB);
+    if(be.places) tasks.push(fetchProviderBuckets(lat, lon, state.radiusM).catch(()=>null));
+    const [osmB, provB] = await Promise.all(tasks);
+    if(!osmB && !provB) throw new Error('places services unavailable');
+    const b = mergeBuckets(osmB, provB);
     try{ localStorage.setItem(lsKey, JSON.stringify({ t:Date.now(), b })); }catch(e){}
     return b;
   })();
@@ -1504,7 +1504,9 @@ async function getPOIs(kind){
   const buckets = await getAllPOIs();
   return buckets[kind] || [];
 }
-async function fetchFSQBuckets(lat, lon, r){
+/* /api/places already merges Google Places + Foursquare server-side; this just
+   fans out over the five category buckets the tabs use. */
+async function fetchProviderBuckets(lat, lon, r){
   const cats = ['services','attractions','food','shopping','kids'];
   const out = {};
   await Promise.all(cats.map(async c=>{
@@ -1517,20 +1519,24 @@ async function fetchFSQBuckets(lat, lon, r){
   return out;
 }
 const normName = n => n.toLowerCase().replace(/[^a-z0-9]/g,'');
-function mergeBuckets(osmB, fsqB){
+function mergeBuckets(osmB, provB){
   const cats = ['services','attractions','food','kids','shopping','favorites'];
   const b = {};
   for(const c of cats){
     const merged = [...(osmB?.[c]||[])];
     const byName = new Map(merged.map(i=>[normName(i.name), i]));
-    for(const it of (fsqB?.[c]||[])){
+    for(const it of (provB?.[c]||[])){
       const k = normName(it.name);
       const existing = byName.get(k);
       if(existing){
-        // enrich the OSM entry with Foursquare rating/price/id where it lacks them
+        // enrich the OSM entry with provider rating/price/id where it lacks them
         if(existing.rating == null && it.rating != null) existing.rating = it.rating;
         if(existing.price == null && it.price != null) existing.price = it.price;
+        if(existing.rating5 == null && it.rating5 != null) existing.rating5 = it.rating5;
+        if(existing.ratingCount == null && it.ratingCount != null) existing.ratingCount = it.ratingCount;
+        if(existing.openNow == null && it.openNow != null) existing.openNow = it.openNow;
         if(!existing.fsqId && it.fsqId) existing.fsqId = it.fsqId;
+        if(!existing.gid && it.gid) existing.gid = it.gid;
         if(!existing.website && it.website) existing.website = it.website;
         continue;
       }
@@ -1751,22 +1757,27 @@ async function enrichPOI(it, box){
   if(it._desc !== undefined){ box.innerHTML = it._desc; return; }
   it._desc = '';                                       // only try once
   box.innerHTML = `<div class="loading" style="padding:6px 0"><div class="spinner"></div>Looking up…</div>`;
-  if(it.fsqId){
+  // Google first (richer photos + an editorial blurb), then Foursquare
+  const sources = [];
+  if(it.gid)   sources.push({ q: 'src=goog&id=' + encodeURIComponent(it.gid), label: 'Google Places' });
+  if(it.fsqId) sources.push({ q: 'src=fsq&id='  + encodeURIComponent(it.fsqId), label: 'Foursquare' });
+  for(const s of sources){
     try{
-      const r = await fetchT('/api/fsqdetails?id=' + it.fsqId, {}, 9000);
-      if(r.ok){
-        const d = await r.json();
-        const bits = [];
-        if(d.photo) bits.push(`<img src="${esc(d.photo)}" alt="" loading="lazy">`);
-        const meta = [];
-        if(d.rating != null) meta.push('Rated ' + d.rating + '/10');
-        if(d.price != null) meta.push('$'.repeat(Math.max(1, Math.min(4, d.price))));
-        if(meta.length) bits.push(`<p>${meta.join(' · ')}</p>`);
-        if(bits.length){
-          it._desc = bits.join('') + `<div class="wikinote">From Foursquare</div>`;
-          box.innerHTML = it._desc;
-          return;
-        }
+      const r = await fetchT('/api/placedetails?' + s.q, {}, 9000);
+      if(!r.ok) continue;
+      const d = await r.json();
+      const bits = [];
+      if(d.photo) bits.push(`<img src="${esc(d.photo)}" alt="" loading="lazy">`);
+      if(d.blurb) bits.push(`<p>${esc(d.blurb)}</p>`);
+      const meta = [];
+      if(d.rating5 != null)     meta.push('Rated ' + d.rating5 + '/5' + (d.ratingCount ? ` (${d.ratingCount} reviews)` : ''));
+      else if(d.rating != null) meta.push('Rated ' + d.rating + '/10');
+      if(d.price != null) meta.push('$'.repeat(Math.max(1, Math.min(4, d.price))));
+      if(meta.length) bits.push(`<p>${meta.join(' · ')}</p>`);
+      if(bits.length){
+        it._desc = bits.join('') + `<div class="wikinote">From ${s.label}</div>`;
+        box.innerHTML = it._desc;
+        return;
       }
     }catch(e){}
   }
