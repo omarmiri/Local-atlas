@@ -1465,6 +1465,18 @@ const OVERPASS_MIRRORS = [
 let overpassChain = Promise.resolve();
 function overpassQuery(body){
   const run = async ()=>{
+    /* Our backend first: it fetches server-side and shares one Redis-backed
+       cache across every visitor, so the first person to open a town warms it
+       for everyone. Going straight to a mirror — the old behaviour — meant
+       ~10 s and a coin-flip 504 on every single load, for every user. */
+    try{
+      const be = await state.backendP;
+      if(be.ok){
+        const r = await fetchT('/api/overpass', { method:'POST',
+          headers:{'content-type':'application/json'}, body: JSON.stringify({ q: body }) }, 30000);
+        if(r.ok) return await r.json();
+      }
+    }catch(e){ /* fall through to the public mirrors */ }
     let lastErr = new Error('places service unavailable');
     for(const url of OVERPASS_MIRRORS){
       try{

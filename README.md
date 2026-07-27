@@ -45,7 +45,7 @@ returns a boolean per key so you can confirm what's wired.
 | `NASA_API_KEY` | Natural Events map layer (wildfires/storms/volcanoes/floods) | Free key at api.nasa.gov. EONET itself is keyless; the key just gates the feature flag. |
 | `NPS_API_KEY` | National-park event counts in "Most Happening" | Free key at nps.gov/subjects/developer. |
 | `CENSUS_API_KEY` | Higher rate limits on the town-profile + Cost lookups | Optional; the Census geocoder and ACS work without it at lower limits. |
-| `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` | Persistent L2 cache | **Strongly recommended.** Free tier: 256 MB, 500k commands/mo, no card. Use the **REST** URL+token (not the redis:// string). Without it, caches reset on every restart/spin-down, re-running Gemini/Foursquare calls unnecessarily. |
+| `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` | Persistent L2 cache | Check it with **`/api/cache-test`**, which forces a real round-trip and reports the verdict. The `redis` flag on `/api/health` used to be `!!RURL` — it only proved the env var was non-empty, and since every Redis error is swallowed, a bad token looked exactly like a permanently cold cache. **Strongly recommended.** Free tier: 256 MB, 500k commands/mo, no card. Use the **REST** URL+token (not the redis:// string). Without it, caches reset on every restart/spin-down, re-running Gemini/Foursquare calls unnecessarily. |
 | `GEMINI_MODEL` | Overrides the Gemini model string | Optional. |
 | `SELF_PING_URL` | Overrides the keep-alive target | Optional; defaults to Render's `RENDER_EXTERNAL_URL`. |
 
@@ -110,6 +110,14 @@ returns a boolean per key so you can confirm what's wired.
 - Leaderboards and AI features (Laws, Cost's tax block, Weirdest, Visit) are computed **once per
   location/period** and cached server-side, shared across all users. With Redis they survive
   restarts. The server pre-warms the three leaderboards and all 50 state law sets on boot.
+- **Overpass (OSM places) is proxied through `/api/overpass`**, not called from the browser.
+  It is the slowest call in a place load — measured ~10 s, with the public mirrors returning 504
+  and 429 under load — and while the browser called mirrors directly it could not be cached at
+  all, so every visitor paid the full cost and nobody's lookup warmed anyone else's. Cached 24 h
+  by a sha1 of the query body.
+  - **Trade-off to know:** proxying concentrates Overpass traffic on one Render IP, and Overpass
+    rate-limits by IP. The browser therefore still falls through to the public mirrors whenever
+    the proxy returns non-OK, spreading load back across user IPs. Don't remove that fallback.
 - **Cache-key discipline:** when you change the *shape* of cached data, bump its key prefix
   (e.g. census went `cs:` -> `cs6:`). Otherwise stale entries are served indefinitely and the fix
   appears not to work. This has bitten us repeatedly - it is the first thing to check when a data

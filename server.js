@@ -31,21 +31,36 @@ const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';  // che
 const cache = new Map();
 const RURL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '');
 const RTOK = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+/* Redis failures are deliberately silent — a dead cache must not break a
+   request. That makes a misconfigured token indistinguishable from a cold
+   cache *forever*, so record what actually happened and report it on
+   /api/health. `redis: !!RURL` only ever proved an env var was non-empty. */
+const redisState = { configured: !!RURL, ok: null, err: '', hits: 0, misses: 0, writes: 0, at: 0 };
+function redisNote(ok, err){
+  redisState.ok = ok; redisState.at = Date.now();
+  redisState.err = ok ? '' : String(err || '').slice(0, 140);
+}
 async function redisGet(key){
   if(!RURL) return null;
   try{
     const r = await fetch(`${RURL}/get/${encodeURIComponent(key)}`,
       { headers: { Authorization: 'Bearer ' + RTOK } });
-    if(!r.ok) return null;
+    if(!r.ok){ redisNote(false, 'GET HTTP ' + r.status); return null; }
     const j = await r.json();
-    return typeof j.result === 'string' ? j.result : null;
-  }catch(e){ return null; }
+    redisNote(true);
+    const v = typeof j.result === 'string' ? j.result : null;
+    if(v == null) redisState.misses++; else redisState.hits++;
+    return v;
+  }catch(e){ redisNote(false, e.message); return null; }
 }
 function redisSet(key, val, ttlMs){
   if(!RURL) return;
+  // Upstash rejects oversized REST bodies; skip rather than fail every write
+  if(val.length > 900000) return;
   fetch(`${RURL}/set/${encodeURIComponent(key)}?px=${Math.max(1000, Math.round(ttlMs))}`,
     { method: 'POST', headers: { Authorization: 'Bearer ' + RTOK }, body: val })
-    .catch(()=>{});
+    .then(r => { if(r.ok){ redisState.writes++; redisNote(true); } else redisNote(false, 'SET HTTP ' + r.status); })
+    .catch(e => redisNote(false, e.message));
 }
 const encVal = v => Buffer.isBuffer(v) ? 'b64:' + v.toString('base64')
   : typeof v === 'string' ? 'str:' + v : 'jsn:' + JSON.stringify(v);
@@ -70,7 +85,29 @@ async function cached(key, ttlMs, fn){
   return v;
 }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, goog: !!GOOG, tm: !!TM, ai: !!AI, owm: !!OWM, redis: !!RURL, nps: !!NPS, windy: !!WINDY, nasa: !!NASA }));
+app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, goog: !!GOOG, tm: !!TM, ai: !!AI, owm: !!OWM,
+  redis: redisState.configured && redisState.ok !== false, nps: !!NPS, windy: !!WINDY, nasa: !!NASA }));
+
+/* Forces a real Upstash round-trip and reports the truth. Use this rather than
+   the health flag when asking "is the shared cache actually working?" */
+app.get('/api/cache-test', async (req, res) => {
+  const out = { configured: !!RURL, url: RURL ? RURL.replace(/^https?:\/\//, '').slice(0, 28) + '…' : '',
+    l1Entries: cache.size, ...redisState };
+  if(!RURL) return res.json({ ...out, verdict: 'no UPSTASH_REDIS_REST_URL set — L1 memory cache only' });
+  const probe = 'diag:' + Date.now();
+  try{
+    const t0 = Date.now();
+    const w = await fetch(`${RURL}/set/${probe}?px=20000`,
+      { method: 'POST', headers: { Authorization: 'Bearer ' + RTOK }, body: 'str:ping' });
+    if(!w.ok) return res.json({ ...out, verdict: 'WRITE FAILED HTTP ' + w.status + ' — check UPSTASH_REDIS_REST_TOKEN' });
+    const r = await fetch(`${RURL}/get/${probe}`, { headers: { Authorization: 'Bearer ' + RTOK } });
+    const j = r.ok ? await r.json() : null;
+    const ms = Date.now() - t0;
+    await fetch(`${RURL}/del/${probe}`, { method: 'POST', headers: { Authorization: 'Bearer ' + RTOK } }).catch(()=>{});
+    return res.json({ ...out, roundTripMs: ms,
+      verdict: j?.result === 'str:ping' ? 'OK — shared cache is live' : 'WROTE BUT READ BACK WRONG VALUE' });
+  }catch(e){ res.json({ ...out, verdict: 'ERROR ' + String(e.message || e) }); }
+});
 
 /* ---- Foursquare places ---- */
 /* Legacy v3 was shut down May 15 2026 — this is the new Places API.
@@ -269,6 +306,39 @@ app.get('/api/places', async (req, res) => {
     const lists = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
     if(!lists.length) throw new Error(settled.map(s => String(s.reason?.message || s.reason)).join('; '));
     res.json({ items: mergePlaces(lists) });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* ---- Overpass proxy (OSM places) ----
+   This is the slowest call in a place load — measured at ~10 s, and the public
+   mirrors 504 under load. It used to run browser -> mirror, so it never touched
+   this server and the shared cache could not hold it: one visitor's lookup
+   warmed nothing for the next. Proxying it puts OSM results in Redis alongside
+   everything else. OSM changes slowly, so the TTL is generous. */
+const OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter'
+];
+app.post('/api/overpass', express.json({ limit: '64kb' }), async (req, res) => {
+  try{
+    const q = String(req.body?.q || '').slice(0, 8000);
+    if(!q) return res.status(400).json({ error: 'q required' });
+    const key = 'ovp:v1:' + require('crypto').createHash('sha1').update(q).digest('hex');
+    const data = await cached(key, 24 * 3600e3, async () => {
+      let last = 'no mirror responded';
+      for(const url of OVERPASS_MIRRORS){
+        try{
+          const rr = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q),
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            signal: AbortSignal.timeout(25000) });
+          if(rr.ok) return rr.json();
+          last = 'HTTP ' + rr.status;
+        }catch(e){ last = String(e.message || e); }
+      }
+      throw new Error('Overpass: ' + last);
+    });
+    res.json(data);
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
