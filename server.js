@@ -92,7 +92,9 @@ app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, goog: !!GO
    the health flag when asking "is the shared cache actually working?" */
 app.get('/api/cache-test', async (req, res) => {
   const out = { configured: !!RURL, url: RURL ? RURL.replace(/^https?:\/\//, '').slice(0, 28) + '…' : '',
-    l1Entries: cache.size, ...redisState };
+    l1Entries: cache.size, ...redisState,
+    overpass: { circuitOpen: Date.now() < ovpCircuit.openUntil, tries: ovpCircuit.tries,
+      wins: ovpCircuit.wins, lastErr: ovpCircuit.lastErr } };
   if(!RURL) return res.json({ ...out, verdict: 'no UPSTASH_REDIS_REST_URL set — L1 memory cache only' });
   const probe = 'diag:' + Date.now();
   try{
@@ -320,25 +322,59 @@ const OVERPASS_MIRRORS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter'
 ];
+/* Overpass rate-limits by IP, and Render's outbound IP is shared across many
+   services — it is 429'd essentially all the time. Measured from the deployed
+   host: overpass-api.de 429/504, the other two mirrors hang past 40 s. So this
+   endpoint must NEVER make the browser wait on an upstream fetch it is going to
+   lose anyway. A circuit breaker keeps failures at ~1 ms so the client falls
+   straight through to its own IP, while still retrying occasionally — one
+   success caches a town for everyone for 24 h, which is the whole point. */
+const ovpCircuit = { openUntil: 0, lastErr: '', tries: 0, wins: 0 };
+const OVP_COOLDOWN = 15 * 60e3;
+async function overpassUpstream(q){
+  let last = 'no mirror responded';
+  for(const url of OVERPASS_MIRRORS.slice(0, 2)){         // two at most; budget over coverage
+    try{
+      const rr = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal: AbortSignal.timeout(7000) });
+      if(rr.ok){ ovpCircuit.wins++; return rr.json(); }
+      last = 'HTTP ' + rr.status;
+    }catch(e){ last = String(e.message || e); }
+  }
+  throw new Error(last);
+}
 app.post('/api/overpass', express.json({ limit: '64kb' }), async (req, res) => {
   try{
     const q = String(req.body?.q || '').slice(0, 8000);
     if(!q) return res.status(400).json({ error: 'q required' });
     const key = 'ovp:v1:' + require('crypto').createHash('sha1').update(q).digest('hex');
-    const data = await cached(key, 24 * 3600e3, async () => {
-      let last = 'no mirror responded';
-      for(const url of OVERPASS_MIRRORS){
-        try{
-          const rr = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q),
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            signal: AbortSignal.timeout(25000) });
-          if(rr.ok) return rr.json();
-          last = 'HTTP ' + rr.status;
-        }catch(e){ last = String(e.message || e); }
-      }
-      throw new Error('Overpass: ' + last);
-    });
-    res.json(data);
+
+    // 1. cache read-through — the only path that reliably pays off
+    const hit = cache.get(key);
+    if(hit && Date.now() - hit.t < 24 * 3600e3) return res.json(hit.v);
+    const rv = await redisGet(key);
+    if(rv != null){
+      const v = decVal(rv);
+      if(v != null){ cache.set(key, { t: Date.now(), v }); return res.json(v); }
+    }
+
+    // 2. cache miss: only attempt upstream when the breaker is closed
+    if(Date.now() < ovpCircuit.openUntil)
+      return res.status(503).json({ miss: true, reason: 'overpass unreachable from server', retry: 'client' });
+    ovpCircuit.tries++;
+    try{
+      const v = await overpassUpstream(q);
+      cache.set(key, { t: Date.now(), v });
+      if(cache.size > 600) cache.delete(cache.keys().next().value);
+      redisSet(key, encVal(v), 24 * 3600e3);
+      ovpCircuit.openUntil = 0;
+      return res.json(v);
+    }catch(e){
+      ovpCircuit.openUntil = Date.now() + OVP_COOLDOWN;
+      ovpCircuit.lastErr = String(e.message || e).slice(0, 120);
+      return res.status(503).json({ miss: true, reason: ovpCircuit.lastErr, retry: 'client' });
+    }
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 

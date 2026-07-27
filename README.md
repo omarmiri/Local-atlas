@@ -110,14 +110,24 @@ returns a boolean per key so you can confirm what's wired.
 - Leaderboards and AI features (Laws, Cost's tax block, Weirdest, Visit) are computed **once per
   location/period** and cached server-side, shared across all users. With Redis they survive
   restarts. The server pre-warms the three leaderboards and all 50 state law sets on boot.
-- **Overpass (OSM places) is proxied through `/api/overpass`**, not called from the browser.
-  It is the slowest call in a place load — measured ~10 s, with the public mirrors returning 504
-  and 429 under load — and while the browser called mirrors directly it could not be cached at
-  all, so every visitor paid the full cost and nobody's lookup warmed anyone else's. Cached 24 h
-  by a sha1 of the query body.
-  - **Trade-off to know:** proxying concentrates Overpass traffic on one Render IP, and Overpass
-    rate-limits by IP. The browser therefore still falls through to the public mirrors whenever
-    the proxy returns non-OK, spreading load back across user IPs. Don't remove that fallback.
+- **Overpass (OSM places) reads through `/api/overpass` but is still fetched by the browser.**
+  It is the slowest call in a place load (~10 s, mirrors 504 under load), and calling mirrors
+  directly meant it could never be cached — every visitor paid full price and nobody's lookup
+  warmed anyone else's. `/api/overpass` serves it from the shared cache when present.
+  - **Overpass rate-limits by IP, and Render's outbound IP is shared across many services, so it
+    is 429'd essentially all the time.** Verified from the deployed host: `overpass-api.de`
+    returns 429/504 and the other two mirrors hang past 40 s. Server-side fetching is therefore
+    not viable here, and an endpoint that *waits* on it makes every load slower than doing
+    nothing. This was a real regression when the proxy first shipped.
+  - So: a cache **hit** is served in ~100 ms; a **miss** returns 503 `{miss:true}` in ~2 ms via a
+    circuit breaker (15 min cooldown) and the browser fetches from its own IP. The server still
+    retries upstream once per cooldown, because one success caches a town for everyone for 24 h.
+  - The browser's mirror fallback and the 5 s client timeout on `/api/overpass` are both
+    load-bearing. **Don't remove either** — without them a throttled server stalls every user.
+  - Watch it with `/api/cache-test` → `overpass: {circuitOpen, tries, wins, lastErr}`.
+  - Cross-user warming is therefore mostly **not** happening for OSM data today. Making it work
+    would mean letting clients POST their fetched results back for caching — which is a cache
+    poisoning vector on an unauthenticated endpoint, so it is deliberately not implemented.
 - **Cache-key discipline:** when you change the *shape* of cached data, bump its key prefix
   (e.g. census went `cs:` -> `cs6:`). Otherwise stale entries are served indefinitely and the fix
   appears not to work. This has bitten us repeatedly - it is the first thing to check when a data
