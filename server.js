@@ -122,7 +122,8 @@ const FSQ_CATS = {
   attractions: '4d4b7104d754a06370d81259,4d4b7105d754a06377d81259', // arts & entertainment, outdoors
   food:        '4d4b7105d754a06374d81259',                          // dining & drinking
   shopping:    '4d4b7105d754a06378d81259',                          // retail
-  kids:        '4d4b7104d754a06370d81259'                           // arts & entertainment
+  kids:        '4d4b7104d754a06370d81259',                          // arts & entertainment
+  favorites:   '4d4b7105d754a06377d81259'                           // outdoors & recreation
 };
 /* Foursquare's role here is coverage and contact details, not ratings.
    `hours` and `rating` sit behind a separately-metered premium quota that 429s
@@ -184,7 +185,12 @@ const GOOG_TYPES = {
   attractions: ['tourist_attraction', 'museum', 'art_gallery', 'park', 'zoo', 'aquarium', 'historical_landmark'],
   food:        ['restaurant', 'cafe', 'bar', 'bakery', 'meal_takeaway'],
   shopping:    ['store', 'shopping_mall', 'supermarket', 'clothing_store', 'department_store', 'book_store', 'hardware_store'],
-  kids:        ['playground', 'amusement_park', 'amusement_center', 'water_park', 'zoo', 'aquarium']
+  kids:        ['playground', 'amusement_park', 'amusement_center', 'water_park', 'zoo', 'aquarium'],
+  /* Rec tab. Ordered most-certain-first: the degrade chain below trims from the
+     tail, so if Google rejects a newer type the common ones still survive. */
+  favorites:   ['golf_course', 'bowling_alley', 'movie_theater', 'marina', 'campground',
+                'dog_park', 'hiking_area', 'ski_resort', 'ice_skating_rink', 'swimming_pool',
+                'fitness_center', 'national_park']
 };
 const GOOG_MASK = [
   'places.id', 'places.displayName', 'places.location', 'places.formattedAddress',
@@ -213,9 +219,11 @@ async function googPlaces(category, lat, lon, r){
   const rad = Math.min(r, 50000);                      // Google caps the circle at 50 km
   const key = `gpl:${category}:${(+lat).toFixed(4)},${(+lon).toFixed(4)}:${rad}`;
   const data = await cached(key, 6 * 3600e3, async () => {
-    // retry with just the core type if Google rejects one of the others
+    /* Google 400s the whole request if any single includedType is unknown to it.
+       Trim from the tail rather than collapsing to one type — dropping straight
+       to types[0] would silently reduce Rec to nothing but golf courses. */
     let last = '';
-    for(const list of [types, types.slice(0, 1)]){
+    for(const list of [types, types.slice(0, 4), types.slice(0, 1)]){
       const rr = await fetch(`${GOOG_BASE}/places:searchNearby`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOG, 'X-Goog-FieldMask': GOOG_MASK },

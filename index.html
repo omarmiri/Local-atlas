@@ -1545,28 +1545,50 @@ function bucketize(elements){
   }
   return buckets;
 }
+const POI_TABS = ['services','attractions','food','shopping','kids','favorites'];
 function getAllPOIs(){
   const key = 'poiAll_'+state.radiusM;
   if(state.cache[key]) return state.cache[key];        // promise shared by all tabs
   const { lat, lon } = state.place;
+  const token = state.reqToken;
+  const lsKey = `poiv7:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
+  const save = b => { try{ localStorage.setItem(lsKey, JSON.stringify({ t:Date.now(), b })); }catch(e){} };
   const promise = (async ()=>{
     // warm local cache: same spot + radius within 24 h loads instantly
-    const lsKey = `poiv7:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
     try{
       const c = JSON.parse(localStorage.getItem(lsKey) || 'null');
       if(c && Date.now() - c.t < 864e5) return c.b;
     }catch(e){}
     const be = await state.backendP;
-    const tasks = [
-      overpassQuery(buildCombinedQuery(lat, lon, state.radiusM))
-        .then(d=>bucketize(d.elements)).catch(()=>null)
-    ];
-    if(be.places) tasks.push(fetchProviderBuckets(lat, lon, state.radiusM).catch(()=>null));
-    const [osmB, provB] = await Promise.all(tasks);
-    if(!osmB && !provB) throw new Error('places services unavailable');
-    const b = mergeBuckets(osmB, provB);
-    try{ localStorage.setItem(lsKey, JSON.stringify({ t:Date.now(), b })); }catch(e){}
-    return b;
+    /* OSM is best-effort, never a dependency. Overpass takes ~10 s and is
+       frequently 429/504, and no host we can deploy to escapes its per-IP
+       throttling — so waiting on it stalled every tab behind the slowest,
+       flakiest source even though the providers had already answered. Start it,
+       don't await it: ship provider results now and fold OSM in when it lands.
+       It is only awaited when there is nothing else to show. */
+    const osmP = overpassQuery(buildCombinedQuery(lat, lon, state.radiusM))
+      .then(d=>bucketize(d.elements)).catch(()=>null);
+    const provB = be.places ? await fetchProviderBuckets(lat, lon, state.radiusM).catch(()=>null) : null;
+    const hasProv = provB && Object.values(provB).some(a=>a && a.length);
+
+    if(!hasProv){
+      const osmB = await osmP;                        // last resort: nothing else to show
+      if(!osmB) throw new Error('places services unavailable');
+      const b = mergeBuckets(osmB, provB);
+      save(b);
+      return b;
+    }
+    osmP.then(osmB=>{
+      /* Only persist once OSM has settled, so a reload inside the 24 h window
+         can't lock in a provider-only list and starve Rec of OSM for a day. */
+      const merged = mergeBuckets(osmB, provB);
+      save(merged);
+      if(!osmB || token !== state.reqToken) return;
+      state.cache[key] = Promise.resolve(merged);
+      delete state.cache.kidsFiltered;                // rescreen against the fuller list
+      if(POI_TABS.includes(state.tab)) renderTab(state.tab);
+    });
+    return mergeBuckets(null, provB);
   })();
   promise.catch(()=>{ if(state.cache[key] === promise) delete state.cache[key]; }); // failed fetches can retry
   state.cache[key] = promise;
@@ -1607,7 +1629,9 @@ async function filterKidsList(list){
 /* /api/places already merges Google Places + Foursquare server-side; this just
    fans out over the five category buckets the tabs use. */
 async function fetchProviderBuckets(lat, lon, r){
-  const cats = ['services','attractions','food','shopping','kids'];
+  // 'favorites' (the Rec tab) used to be omitted here, which left it 100% OSM —
+  // the only tab with no fallback, so it alone went empty whenever Overpass failed
+  const cats = ['services','attractions','food','shopping','kids','favorites'];
   const out = {};
   await Promise.all(cats.map(async c=>{
     try{
