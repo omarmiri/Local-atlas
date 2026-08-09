@@ -108,17 +108,20 @@ hyphenated name cannot be reached by `process.env.CALLE_API_KEY` dot-access.
 
 | Variable | State |
 |---|---|
-| `CALLE_API_KEY` | ⚠️ **must be re-added with underscores** — see below |
-| `REAL-CALL-ACCESS-CODE` | set ✅ — the code that unlocks real dialling |
-| `CALL-E-WEBHOOK-TOKEN` | not set; any long random string, the only thing making the webhook URL unguessable |
-| `CALL-E-DRY-RUN` | not needed — simulation is now the default, not a mode |
+| `CALLE_API_KEY` | set ✅ |
+| `REAL_CALL_ACCESS_CODE` | set ✅ — the code that unlocks real dialling |
+| `CALLE_WEBHOOK_TOKEN` | **not set** — the last missing piece; any long random string |
+| `CALLE_DRY_RUN` | not needed — simulation is the default, not a mode |
 
-**The key does not currently reach the process.** `/api/health` reports `calleEnv: []`, which
-lists every variable whose name matches `/call.?e/i` — so `CALL-E-API-KEY` is being dropped
-before Node sees it, almost certainly because Render requires env keys to be valid shell
-identifiers. Re-add it as `CALLE_API_KEY`. (`REAL-CALL-ACCESS-CODE` is read under both
-spellings too, and should be re-added as `REAL_CALL_ACCESS_CODE` if it turns out to be
-dropped for the same reason.)
+**Env var names must be valid shell identifiers.** These were first set as
+`CALL-E-API-KEY` and `REAL-CALL-ACCESS-CODE`, and Render dropped both silently — 148
+variables reached the process and neither of those was among them. Underscores fixed it. The
+code still reads every setting under both spellings, so a hyphenated name will work anywhere
+that does deliver it.
+
+Without `CALLE_WEBHOOK_TOKEN`, terminal results arrive by polling only. That does work — the
+panel polls every 5 s for up to 3 minutes, and calls take 30–90 s — but the webhook is the
+documented path and does not depend on the visitor keeping the card open.
 
 ### How a real call is armed
 

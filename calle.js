@@ -775,14 +775,6 @@ module.exports = {
   placeKey, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
   realCallOk, templatesFor, moderateQuestion, suggestQuestions,
   simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA, OPENER,
-  /* Names only, never values. The key was set in Render under a hyphenated
-     name and did not arrive; without this there is no way to tell "the
-     variable is absent" from "the platform rewrote or dropped the name",
-     and those have opposite fixes. */
-  envNames: () => ({
-    total: Object.keys(process.env).length,          // proves this build is the live one
-    matching: Object.keys(process.env).filter(k => /call|access/i.test(k)).sort()
-  }),
   info: () => ({
     configured: configured(), dryRun: DRY_RUN, webhook: !!webhookUrl(),
     /* Whether a real call is possible *at all* on this deploy — needs both a
