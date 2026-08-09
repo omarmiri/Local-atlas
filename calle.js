@@ -762,7 +762,7 @@ module.exports = {
      name and did not arrive; without this there is no way to tell "the
      variable is absent" from "the platform rewrote or dropped the name",
      and those have opposite fixes. */
-  envNames: () => Object.keys(process.env).filter(k => /call.?e/i.test(k)).sort(),
+  envNames: () => Object.keys(process.env).filter(k => /call|access/i.test(k)).sort(),
   info: () => ({
     configured: configured(), dryRun: DRY_RUN, webhook: !!webhookUrl(),
     /* Whether a real call is possible *at all* on this deploy — needs both a
