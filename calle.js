@@ -729,6 +729,11 @@ module.exports = {
   placeKey, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
   accessOk, templatesFor, moderateQuestion, suggestQuestions,
   simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA,
+  /* Names only, never values. The key was set in Render under a hyphenated
+     name and did not arrive; without this there is no way to tell "the
+     variable is absent" from "the platform rewrote or dropped the name",
+     and those have opposite fixes. */
+  envNames: () => Object.keys(process.env).filter(k => /call.?e/i.test(k)).sort(),
   info: () => ({
     configured: configured(), dryRun: DRY_RUN, webhook: !!webhookUrl(),
     // dry run opens the gate, so report the gate as the client will find it

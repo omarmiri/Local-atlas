@@ -87,7 +87,7 @@ async function cached(key, ttlMs, fn){
 
 app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, goog: !!GOOG, tm: !!TM, ai: !!AI, owm: !!OWM,
   redis: redisState.configured && redisState.ok !== false, nps: !!NPS, windy: !!WINDY, nasa: !!NASA,
-  calle: require('./calle').info() }));
+  calle: require('./calle').info(), calleEnv: require('./calle').envNames() }));
 
 /* Forces a real Upstash round-trip and reports the truth. Use this rather than
    the health flag when asking "is the shared cache actually working?" */
