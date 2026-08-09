@@ -261,12 +261,24 @@ async function suggestQuestions(place, category){
   ].join('\n');
 
   try{
-    const txt = await geminiText(prompt,
-      { maxOutputTokens: 300, temperature: 0.6, responseMimeType: 'application/json' });
-    const arr = JSON.parse(txt);
+    /* responseSchema pins the reply to a bare array of strings. Asking for
+       "JSON only" in prose is not enough — the model is free to wrap it in
+       {"questions": [...]}, which is what it did, and every suggestion was
+       being silently discarded as a non-array. Parsing stays tolerant of both
+       shapes anyway, since a schema is a request and not a guarantee. */
+    const txt = await geminiText(prompt, {
+      maxOutputTokens: 300, temperature: 0.6,
+      responseMimeType: 'application/json',
+      responseSchema: { type: 'ARRAY', items: { type: 'STRING' } }
+    });
+    const parsed = JSON.parse(txt);
+    const arr = Array.isArray(parsed)
+      ? parsed
+      : Object.values(parsed || {}).find(Array.isArray) || [];
     const seen = new Set(base.map(t => qHash(t.text)));
     const out = [];
-    for(const raw of (Array.isArray(arr) ? arr : []).slice(0, 8)){
+    for(const item of arr.slice(0, 8)){
+      const raw = typeof item === 'string' ? item : (item && (item.question || item.text)) || '';
       const v = validateQuestion(raw);
       if(!v.ok) continue;                      // silently drop, never surface a bad chip
       const h = qHash(v.question);
