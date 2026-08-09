@@ -200,10 +200,17 @@
   .ask-chips button:hover{border-color:var(--sign-green);color:var(--sign-green)}
   .ask-chips button.gen{border-style:dashed}
   .ask-form{display:flex;gap:6px}
+  /* an explicit display beats the UA's [hidden]{display:none}, so restate it */
+  .ask-form[hidden],.ask-chips[hidden]{display:none}
+  /* colour is not inherited by form controls — without an explicit --ink the UA
+     default is black, which vanishes against the dark surface behind it */
   .ask-form input{
     flex:1;min-width:0;border:1.5px solid var(--line);border-radius:9px;
-    padding:7px 10px;font:inherit;font-size:.82rem;background:var(--surface);
+    padding:7px 10px;font:inherit;font-size:.82rem;
+    background:var(--surface);color:var(--ink);
   }
+  .ask-form input::placeholder{color:var(--ink-soft);opacity:1}
+  .ask-form input:focus{border-color:var(--sign-green);outline:none}
   .ask-form button{
     border:1.5px solid var(--sign-green);background:var(--sign-green);color:#fff;
     font-family:'Overpass',sans-serif;font-weight:700;font-size:.72rem;
@@ -211,7 +218,39 @@
   }
   .ask-form button:disabled{opacity:.55;cursor:default}
   .ask-err{font-size:.76rem;line-height:1.5;color:#9b2226;margin-top:6px}
+  .ask-err.calm{color:var(--ink-soft)}
+  :root[data-theme="dark"] .ask-err{color:#F2A0A0}
   .ask-live{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--ink);padding:4px 0}
+  .ask-mode{
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;line-height:1.6;
+    color:var(--ink-soft);margin-top:9px;padding-top:8px;border-top:1px solid var(--line);
+  }
+  .ask-mode.live{color:var(--ink)}
+  .ask-mode.live strong{color:var(--alert)}
+  .ask-mode button{
+    border:1px solid var(--line);background:transparent;color:var(--sign-green);
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;
+    border-radius:99px;padding:1px 8px;cursor:pointer;white-space:nowrap;
+  }
+  .ask-mode button:hover{border-color:var(--sign-green)}
+  .ask-confirm{
+    margin-top:9px;padding:9px 10px;border-radius:9px;
+    border:1.5px solid var(--alert);background:var(--surface);
+  }
+  .ask-confirm-h{
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:.72rem;
+    text-transform:uppercase;letter-spacing:.06em;color:var(--alert);margin-bottom:6px;
+  }
+  .ask-confirm .ask-note{margin-top:7px}
+  .ask-confirm .faq-quote{background:var(--surface-2)}
+  .ask-confirm-acts{display:flex;gap:8px;margin-top:10px}
+  .ask-confirm-acts button{
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.72rem;
+    text-transform:uppercase;border-radius:99px;padding:6px 13px;cursor:pointer;
+  }
+  .ask-confirm-acts .ask-go{border:1.5px solid var(--alert);background:var(--alert);color:#fff}
+  .ask-confirm-acts .ask-go:disabled{opacity:.55;cursor:default}
+  .ask-confirm-acts .ask-cancel{border:1.5px solid var(--line);background:transparent;color:var(--ink-soft)}
   .poicontrols{display:flex;gap:8px;margin:0 0 10px}
   .poicontrols input{
     flex:1;min-width:0;border:1.5px solid var(--line);border-radius:9px;
@@ -1824,7 +1863,7 @@ function poiDetailHTML(it, idx){
     acts.push(`<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>`);
   }
   if(canAsk(it))
-    acts.push(`<button class="ask-btn" data-idx="${idx}">Stored answered questions</button>`);
+    acts.push(`<button class="ask-btn" data-idx="${idx}">Questions Answered by Business</button>`);
   const saved = state.favKeys.has(normName(it.name + state.place.name));
   acts.push(`<button class="fav-btn" data-idx="${idx}">${saved ? '★ Saved' : '☆ Save'}</button>`);
   return `<div class="poi-desc" id="desc-${idx}"></div>` + rows.join('') +
@@ -2118,10 +2157,17 @@ function canAsk(it){
   return (String(it.phone).replace(/\D/g, '').length >= 10);
 }
 
+/* A code is only ever stored after /api/ask-access has confirmed it, so its
+   presence is the unlocked state. The server re-checks it on every ask
+   regardless — this just decides what the panel says it is about to do. */
+function askCode(){
+  try{ return localStorage.getItem(ASK_CODE_KEY) || ''; }catch(e){ return ''; }
+}
+const askLive = () => !!askCode() && !!(state.calle && state.calle.realCalls);
+
 function askHeaders(){
   const h = { 'content-type': 'application/json' };
-  let code = '';
-  try{ code = localStorage.getItem(ASK_CODE_KEY) || ''; }catch(e){}
+  const code = askCode();
   if(code) h['x-atlas-access'] = code;
   return h;
 }
@@ -2179,11 +2225,10 @@ function renderAsk(it, box, idx){
   const sugg = it._sugg || [];
   const asked = new Set(faq.map(e=>e.question.toLowerCase()));
   const chips = sugg.filter(s=>!asked.has(s.text.toLowerCase())).slice(0, 6);
-  const sim = state.calle && state.calle.dryRun;
 
   box.innerHTML = `<div class="ask-panel">
       <div class="ask-head">
-        <h4>Answered questions</h4>
+        <h4>Questions Answered by Business</h4>
         <span class="ask-note">${faq.length ? faq.length + ' on file' : 'none yet'}</span>
       </div>
       ${faq.length ? faq.map((e,i)=>faqItemHTML(e, idx, i)).join('')
@@ -2197,11 +2242,59 @@ function renderAsk(it, box, idx){
         <button type="submit">Ask</button>
       </form>
       <div class="ask-err" hidden></div>
-      <div class="ask-note" style="margin-top:8px">
-        ${sim ? 'Simulation mode: no phone is dialled and the answers below are generated for testing.'
-              : 'A real person answers this phone. The agent says it\'s an AI, asks one question, and hangs up.'}
-      </div>
+      ${askModeHTML(it)}
     </div>`;
+}
+
+/* The panel always states which of the two things the next click will do. The
+   distinction between a simulated answer and a real phone ringing in someone's
+   shop is the most important fact on this card, so it is never implicit. */
+function askModeHTML(it){
+  if(askLive())
+    return `<div class="ask-mode live">
+        <strong>Real calls unlocked.</strong> Asking will place an actual phone call to
+        ${esc(it.name)}, and you'll see the exact question first.
+        <button class="ask-lock">Back to simulation</button>
+      </div>`;
+  const canUnlock = state.calle && state.calle.realCalls;
+  return `<div class="ask-mode">
+      Simulation mode — no phone is dialled and the answers here are generated for testing.
+      ${canUnlock ? `<button class="ask-unlock">Use a real call</button>` : ''}
+    </div>`;
+}
+
+/* Shown before any real call, from the server's own preview: the number it will
+   dial, the disclosure it will open with, and the exact post-sanitisation
+   question. Nothing here is composed on the client — a confirmation screen that
+   guessed at the wording would be worse than none. */
+/* E.164 is what gets dialled, but reading back a 12-digit run to check it is
+   the number you meant is exactly the kind of thing a confirmation shouldn't
+   make you do. Non-NANP numbers pass through unchanged. */
+const prettyPhone = p => {
+  const m = String(p || '').match(/^\+1(\d{3})(\d{3})(\d{4})$/);
+  return m ? `+1 (${m[1]}) ${m[2]}-${m[3]}` : String(p || '');
+};
+
+function renderConfirm(it, box, idx, ask, preview){
+  it._pendingAsk = ask;
+  const panel = box.querySelector('.ask-panel');
+  if(!panel) return;
+  const form = panel.querySelector('.ask-form');
+  if(form) form.hidden = true;
+  const chips = panel.querySelector('.ask-chips');
+  if(chips) chips.hidden = true;
+  panel.insertAdjacentHTML('beforeend', `
+    <div class="ask-confirm">
+      <div class="ask-confirm-h">This will ring a real phone</div>
+      <div class="ask-note">Calling ${esc(preview.placeName || it.name)} on ${esc(prettyPhone(preview.phone))}. The agent opens with:</div>
+      <div class="faq-quote">“${esc(preview.opener)}”</div>
+      <div class="ask-note">Then asks exactly this, and nothing else:</div>
+      <div class="faq-quote">“${esc(preview.question)}”</div>
+      <div class="ask-confirm-acts">
+        <button class="ask-go">Place the call</button>
+        <button class="ask-cancel">Cancel</button>
+      </div>
+    </div>`);
 }
 
 async function loadAsk(it, box, idx){
@@ -2218,15 +2311,21 @@ async function loadAsk(it, box, idx){
   renderAsk(it, box, idx);
 }
 
-function askError(box, msg, offerCode){
+/* One slot below the form carries both rejections and the unlock prompt; `calm`
+   drops the red so asking for a code doesn't read as an error. */
+function askError(box, msg, offerCode, calm){
   const el = box.querySelector('.ask-err');
   if(!el) return;
   el.hidden = false;
+  el.classList.toggle('calm', !!calm);
   el.innerHTML = esc(msg) + (offerCode
     ? `<form class="ask-form" style="margin-top:6px">
-         <input name="code" placeholder="Access code" aria-label="Access code">
+         <input name="code" placeholder="Real-call code" aria-label="Real-call code"
+                inputmode="numeric" autocomplete="off">
          <button type="submit">Unlock</button>
        </form>` : '');
+  const f = el.querySelector('input');
+  if(f) f.focus();
 }
 
 async function submitAsk(it, box, idx, payload){
@@ -2242,8 +2341,11 @@ async function submitAsk(it, box, idx, payload){
     const r = await fetchT('/api/ask-place', { method:'POST', headers: askHeaders(),
       body: JSON.stringify({ place: askPlaceBody(it), ...ask }) }, 25000);
     j = await r.json().catch(()=>({}));
-    if(r.status === 401){ if(btn) btn.disabled = false; return askError(box, j.error || 'This feature is locked.', true); }
-    if(!r.ok && r.status !== 202){ if(btn) btn.disabled = false; return askError(box, j.error || ('Request failed (' + r.status + ')')); }
+    if(btn) btn.disabled = false;
+    // the server will not dial until it has been told the preview was seen
+    if(r.status === 428 && j.needsConfirm) return renderConfirm(it, box, idx, ask, j.preview);
+    if(r.status === 401) return askError(box, j.error || 'This feature is locked.', true);
+    if(!r.ok && r.status !== 202) return askError(box, j.error || ('Request failed (' + r.status + ')'));
   }catch(e){
     if(btn) btn.disabled = false;
     return askError(box, 'Could not reach the server. Try again in a moment.');
@@ -2298,9 +2400,20 @@ contentEl.addEventListener('submit', ev=>{
 
   const codeField = form.elements.code;
   if(codeField){                                          // the unlock form, not the question
-    try{ localStorage.setItem(ASK_CODE_KEY, codeField.value.trim()); }catch(e){}
-    const err = box.querySelector('.ask-err');
-    if(err){ err.hidden = true; err.innerHTML = ''; }
+    const code = (codeField.value || '').trim();
+    const btn = form.querySelector('button');
+    if(btn) btn.disabled = true;
+    /* Verify before storing. Storing an unchecked code would leave the panel
+       claiming real calls are unlocked while every ask quietly simulated —
+       the one wrong impression this feature can give. */
+    fetchT('/api/ask-access', { method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ code }) }, 9000)
+      .then(r=>r.json()).then(j=>{
+        if(!j.ok){ if(btn) btn.disabled = false; return askError(box, 'That code was not accepted.'); }
+        try{ localStorage.setItem(ASK_CODE_KEY, code); }catch(e){}
+        renderAsk(it, box, idx);
+      })
+      .catch(()=>{ if(btn) btn.disabled = false; askError(box, 'Could not check that code right now.'); });
     return;
   }
   const q = (form.elements.q.value || '').trim();
@@ -2335,6 +2448,45 @@ contentEl.addEventListener('click', ev=>{
     const idx = box ? +box.id.split('-')[1] : -1;
     const it = state.currentPOIs[idx];
     if(it && box) submitAsk(it, box, idx, { question: again.dataset.q });
+    return;
+  }
+  const unlock = ev.target.closest('.ask-unlock');
+  if(unlock){
+    const box = unlock.closest('.ask-box');
+    if(box) askError(box, 'Enter the real-call code to place actual phone calls.', true, true);
+    return;
+  }
+  const lock = ev.target.closest('.ask-lock');
+  if(lock && state.currentPOIs){
+    const box = lock.closest('.ask-box');
+    const idx = box ? +box.id.split('-')[1] : -1;
+    const it = state.currentPOIs[idx];
+    try{ localStorage.removeItem(ASK_CODE_KEY); }catch(e){}
+    if(it && box) renderAsk(it, box, idx);
+    return;
+  }
+  const go = ev.target.closest('.ask-go');
+  if(go && state.currentPOIs){
+    const box = go.closest('.ask-box');
+    const idx = box ? +box.id.split('-')[1] : -1;
+    const it = state.currentPOIs[idx];
+    if(it && box && it._pendingAsk){
+      go.disabled = true;
+      const ask = it._pendingAsk;
+      it._pendingAsk = null;
+      const card = box.querySelector('.ask-confirm');
+      if(card) card.remove();
+      box.querySelectorAll('.ask-form, .ask-chips').forEach(n=>{ n.hidden = false; });
+      submitAsk(it, box, idx, { ...ask, confirmed: true, _label: ask.question || '' });
+    }
+    return;
+  }
+  const cancel = ev.target.closest('.ask-cancel');
+  if(cancel && state.currentPOIs){
+    const box = cancel.closest('.ask-box');
+    const idx = box ? +box.id.split('-')[1] : -1;
+    const it = state.currentPOIs[idx];
+    if(it && box){ it._pendingAsk = null; renderAsk(it, box, idx); }
     return;
   }
   const fb = ev.target.closest('.fav-btn');

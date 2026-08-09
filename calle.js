@@ -42,28 +42,31 @@ const DAILY_BUDGET = parseInt(calleEnv('DAILY_CALL_BUDGET') || '25', 10);
 const FAQ_TTL_DAYS = parseInt(calleEnv('FAQ_TTL_DAYS') || '90', 10);
 const CALLER_ID = calleEnv('CALLER_IDENTITY') || 'Local Atlas, a local guide app';
 const ACCESS_CODE = calleEnv('ACCESS_CODE');
+const REAL_CODE = env('REAL_CALL_ACCESS_CODE', 'REAL-CALL-ACCESS-CODE');
 const SIM_FORCE = calleEnv('SIM_OUTCOME');                    // pin a sim outcome for demos
 const SIM_MS = parseInt(calleEnv('SIM_DURATION_MS') || '18000', 10);
 
 const configured = () => !!CALLE_KEY || DRY_RUN;
 
-/* ---- access gate ----
-   Dialling costs real credits, so the ability to start a call is gated on a
-   shared code. This is the *server-side* check and the only one that counts —
-   hiding the button in the UI protects nothing, since /api/ask-place is a
-   public URL. Reading published FAQs stays open to everyone.
+/* ---- real-call gate ----
+   Simulated calls are free, harmless, and open to everyone — they are how the
+   feature is normally used. Dialling an actual business is the thing that costs
+   credits and interrupts a stranger's workday, so that, and only that, sits
+   behind a code. REAL_CALL_ACCESS_CODE is the one to set; the older
+   CALLE_ACCESS_CODE is still honoured so an existing deploy keeps its unlock.
 
-   With no code set the feature is closed rather than open: an unconfigured
-   deploy should not be a free calling service. */
+   This is the *server-side* check and the only one that counts — hiding the
+   affordance in the UI protects nothing, since /api/ask-place is a public URL.
+   With no code configured, no request can ever reach the real API. */
 const crypto = require('crypto');
-function accessOk(code){
-  if(!ACCESS_CODE) return false;
-  const a = Buffer.from(String(code || ''));
-  const b = Buffer.from(ACCESS_CODE);
-  // timingSafeEqual throws on length mismatch, which itself leaks length;
-  // hashing first makes every comparison the same width.
-  const h = x => crypto.createHash('sha256').update(x).digest();
-  return crypto.timingSafeEqual(h(a), h(b));
+function realCallOk(code){
+  const supplied = String(code || '');
+  if(!supplied) return false;
+  // hash first: timingSafeEqual throws on a length mismatch, and the throw
+  // itself leaks the length. Hashing makes every comparison the same width.
+  const h = x => crypto.createHash('sha256').update(String(x)).digest();
+  const given = h(supplied);
+  return [REAL_CODE, ACCESS_CODE].some(c => c && crypto.timingSafeEqual(given, h(c)));
 }
 
 /* ---- SDK handle (lazy + memoised) ---- */
@@ -345,13 +348,19 @@ async function moderateQuestion(question, place){
 /* ---- call script ----
    Narrow on purpose: disclose, ask one thing, allow one clarification, take
    "I don't know" as a real answer. The guardrails matter more than coverage —
-   this dials real small businesses who did not opt in. */
+   this dials real small businesses who did not opt in.
+
+   OPENER is defined once and used by the script, the simulator, and the
+   confirmation preview. If the preview showed a different disclosure from the
+   one the agent actually reads out, the confirmation would be a lie. */
+const OPENER = `Hi, I'm an AI assistant calling on behalf of ${CALLER_ID}. I have one quick question to confirm a detail on your public listing — is now a good moment?`;
+
 function buildTask({ place, question, phone }){
   return [
     `Call ${place.name}${place.addr ? ` at ${place.addr}` : ''} on ${phone}.`,
     ``,
     `You are an automated assistant calling on behalf of ${CALLER_ID}. Follow these rules exactly:`,
-    `1. Open by saying: "Hi, I'm an AI assistant calling on behalf of ${CALLER_ID}. I have one quick question to confirm a detail on your public listing — is now a good moment?"`,
+    `1. Open by saying: "${OPENER}"`,
     `2. If they are busy or ask you to call back, thank them, say you will try later, and end the call. Do not push.`,
     `3. Ask exactly this one question and nothing else: "${question}"`,
     `4. If the answer is ambiguous, you may ask at most one short clarifying follow-up. Do not ask anything unrelated.`,
@@ -431,8 +440,6 @@ const SIM_SHAPE = {
   refused:     'A staff member picks up and politely declines to answer over the phone.',
   unreachable: 'The line reaches a recorded voicemail greeting. The agent leaves no message and hangs up.'
 };
-
-const OPENER = `Hi, I'm an AI assistant calling on behalf of ${CALLER_ID}. I have one quick question to confirm a detail on your public listing — is now a good moment?`;
 
 async function simulate({ place, question, outcome }){
   if(!AI_KEY) return simFallback({ place, question, outcome });
@@ -530,12 +537,14 @@ async function reserveBudget(){
 
 /* ---- public API ---- */
 
-async function askPlace({ place, question, templateId, accessCode }){
+async function askPlace({ place, question, templateId, accessCode, confirmed }){
   if(!configured()) return { error: 'CALL-E is not configured on this server.', status: 503 };
-  // The gate exists to stop strangers spending call credits. A simulated call
-  // spends none, so it would only be locking people out of a demo.
-  if(!DRY_RUN && !accessOk(accessCode))
-    return { error: 'This feature is limited. Enter the access code to ask a place.', status: 401 };
+
+  /* Simulate unless the caller proved they may spend a credit. Note which way
+     the default falls: a wrong or missing code produces a clearly-labelled
+     simulated answer, never a silent real call. Every later branch reads
+     `live`, so there is exactly one place where that decision is made. */
+  const live = !!CALLE_KEY && realCallOk(accessCode);
 
   /* Two paths in, and they are not equally trusted. A template is resolved
      from a fixed table by id, so no user text reaches the call script.
@@ -565,6 +574,24 @@ async function askPlace({ place, question, templateId, accessCode }){
   const lock = await docGet(lockKey(pk, qh));
   if(lock) return { status: 202, callId: lock.callId, state: 'in_progress', deduped: true };
 
+  /* ---- the confirmation step ----
+     A live call makes a stranger's phone ring, so it does not happen on one
+     click. The client has to come back having been shown the exact question
+     and the exact disclosure the agent will read out, and the number it will
+     dial. Enforced here rather than in the UI, because the UI is not a gate:
+     an unconfirmed request to /api/ask-place cannot reach the real API.
+
+     It sits after validation and moderation deliberately — being asked to
+     confirm a question that would then be rejected wastes the user's decision,
+     and the preview has to be the post-sanitisation text or it isn't a preview
+     of anything. It sits before reserveBudget() so an abandoned confirmation
+     costs nothing. */
+  if(live && !confirmed)
+    return { status: 428, needsConfirm: true, preview: {
+      question: v.question, opener: OPENER, phone,
+      placeName: place.name, callerIdentity: CALLER_ID
+    } };
+
   if(!await reserveBudget())
     return { error: 'Daily call budget reached. Try again tomorrow.', status: 429 };
 
@@ -574,7 +601,7 @@ async function askPlace({ place, question, templateId, accessCode }){
     createdAt: Date.now(), state: 'queued'
   };
 
-  if(DRY_RUN){
+  if(!live){
     /* Generate the whole call up front and store it, then let pollCall reveal
        it after SIM_MS. Generating at poll time instead would race two in-flight
        polls into producing two different transcripts for one call. */
@@ -583,7 +610,7 @@ async function askPlace({ place, question, templateId, accessCode }){
     pending.sim = await simulate({ place, question: v.question, outcome: simOutcome(pk, qh) });
     await docSet(callKey(pending.callId), pending, DAY);
     await docSet(lockKey(pk, qh), { callId: pending.callId }, 10 * 60e3);
-    return { status: 202, callId: pending.callId, state: 'in_progress', dryRun: true };
+    return { status: 202, callId: pending.callId, state: 'in_progress', simulated: true };
   }
 
   const c = await client();
@@ -616,13 +643,15 @@ async function pollCall(callId){
   if(!pending) return { error: 'Unknown call id.', status: 404 };
   if(pending.state === 'done') return { status: 200, state: 'done', entry: pending.entry };
 
-  if(DRY_RUN){
+  /* Branch on the record, not on DRY_RUN: with the real-call code in play a
+     simulated call and a live one can be in flight at the same time, and the
+     global flag can no longer say which of them this is. */
+  if(pending.sim){
     // hold it in progress for a real call's worth of time so the waiting state
     // is exercised end to end rather than flashing past
     if(Date.now() - pending.createdAt < SIM_MS)
       return { status: 200, state: 'in_progress', callId };
-    const sim = pending.sim || simFallback({
-      place: { name: pending.placeName }, question: pending.question, outcome: 'answered' });
+    const sim = pending.sim;
     const entry = await publish(pending, sim.result, {
       summary: sim.summary || 'Simulated call',
       taskCompleted: sim.result.answer_status === 'answered',
@@ -727,8 +756,8 @@ async function getFaq(place){
 module.exports = {
   configured, askPlace, pollCall, handleWebhook, getFaq,
   placeKey, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
-  accessOk, templatesFor, moderateQuestion, suggestQuestions,
-  simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA,
+  realCallOk, templatesFor, moderateQuestion, suggestQuestions,
+  simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA, OPENER,
   /* Names only, never values. The key was set in Render under a hyphenated
      name and did not arrive; without this there is no way to tell "the
      variable is absent" from "the platform rewrote or dropped the name",
@@ -736,8 +765,10 @@ module.exports = {
   envNames: () => Object.keys(process.env).filter(k => /call.?e/i.test(k)).sort(),
   info: () => ({
     configured: configured(), dryRun: DRY_RUN, webhook: !!webhookUrl(),
-    // dry run opens the gate, so report the gate as the client will find it
-    gated: !!ACCESS_CODE && !DRY_RUN, moderation: !!AI_KEY,
+    /* Whether a real call is possible *at all* on this deploy — needs both a
+       key to dial with and a code to unlock. The UI offers the unlock only
+       when this is true, so it can't advertise a door with nothing behind it. */
+    realCalls: !!CALLE_KEY && !!(REAL_CODE || ACCESS_CODE), moderation: !!AI_KEY,
     budget: DAILY_BUDGET, ttlDays: FAQ_TTL_DAYS
   })
 };

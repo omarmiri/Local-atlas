@@ -1232,19 +1232,20 @@ const calle = require('./calle');
 
 app.post('/api/ask-place', express.json({ limit: '8kb' }), async (req, res) => {
   try{
-    const { place, question, templateId } = req.body || {};
+    const { place, question, templateId, confirmed } = req.body || {};
     if(!place || !place.name || place.lat == null || place.lon == null)
       return res.status(400).json({ error: 'place {name, lat, lon, phone} required' });
     const r = await calle.askPlace({ place, question, templateId,
+      confirmed: confirmed === true,
       accessCode: req.get('x-atlas-access') || '' });
     res.status(r.status || 200).json(r);
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
-/* Lets the unlock modal tell a wrong code from a working one without having to
+/* Lets the unlock form tell a wrong code from a working one without having to
    start a call to find out. Reveals only whether the code matches. */
 app.post('/api/ask-access', express.json({ limit: '2kb' }), (req, res) => {
-  res.json({ ok: calle.accessOk((req.body || {}).code || '') });
+  res.json({ ok: calle.realCallOk((req.body || {}).code || '') });
 });
 
 /* Question chips for one place: Gemini's place-specific suggestions first, then

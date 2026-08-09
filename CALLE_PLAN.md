@@ -108,14 +108,35 @@ hyphenated name cannot be reached by `process.env.CALLE_API_KEY` dot-access.
 
 | Variable | State |
 |---|---|
-| `CALL-E-API-KEY` | set ✅ |
-| `CALL-E-DRY-RUN=1` | **set this while building** — simulates every call, dials nothing |
+| `CALLE_API_KEY` | ⚠️ **must be re-added with underscores** — see below |
+| `REAL-CALL-ACCESS-CODE` | set ✅ — the code that unlocks real dialling |
 | `CALL-E-WEBHOOK-TOKEN` | not set; any long random string, the only thing making the webhook URL unguessable |
-| `CALL-E-ACCESS-CODE` | not set — and while it is unset, every real call attempt is refused |
+| `CALL-E-DRY-RUN` | not needed — simulation is now the default, not a mode |
 
-⚠️ **The access code and the dry-run flag are the only two things standing between a chip
-click and a real phone ringing.** With no access code the feature is closed, which is the
-safe default. Setting an access code *without* `CALL-E-DRY-RUN=1` arms real dialling.
+**The key does not currently reach the process.** `/api/health` reports `calleEnv: []`, which
+lists every variable whose name matches `/call.?e/i` — so `CALL-E-API-KEY` is being dropped
+before Node sees it, almost certainly because Render requires env keys to be valid shell
+identifiers. Re-add it as `CALLE_API_KEY`. (`REAL-CALL-ACCESS-CODE` is read under both
+spellings too, and should be re-added as `REAL_CALL_ACCESS_CODE` if it turns out to be
+dropped for the same reason.)
+
+### How a real call is armed
+
+Simulation is the **default**, and a missing or wrong code produces a clearly-labelled
+simulated answer rather than an error — the failure mode of the gate is a fake call, never a
+real one. A live call needs all three of:
+
+1. `CALLE_API_KEY` present, **and**
+2. the visitor supplying `REAL_CALL_ACCESS_CODE` (verified via `POST /api/ask-access`, sent
+   on every ask as `x-atlas-access`), **and**
+3. an explicit `confirmed: true` on a second request, after the server has returned
+   **`428 Precondition Required`** carrying the exact question, the exact disclosure, and the
+   E.164 number it will dial.
+
+Step 3 is server-enforced, not UI decoration: an unconfirmed POST to `/api/ask-place` cannot
+reach the real API no matter what the client does. The preview is built from the same
+`OPENER` constant the call script uses, so the confirmation cannot drift from what the agent
+actually says.
 
 **Do the first live call against a phone you own**, not a business. Authenticate the CLI
 (`npm install -g @call-e/cli`, `calle auth login`) if you want to watch call state
@@ -127,7 +148,8 @@ Checked and ruled out: the OpenAPI spec exposes a single production server and n
 on `POST /v1/calls`, and `test-api.heycall-e.com` is a live staging mirror that still dials a
 real phone and wants its own key.
 
-So `CALLE_DRY_RUN=1` is the sandbox, and it now earns the name. It runs the entire pipeline
+So we simulate instead, and the simulator is now the default path rather than a flag. It runs
+the entire pipeline
 — validation, moderation, dedupe, budget, publish, FAQ storage — against **any** place with
 a callable number, and produces a transcript in the same `CallTranscriptTurn` shape the real
 API returns, so nothing downstream can tell a simulated call from a real one. Gemini writes
