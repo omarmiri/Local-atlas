@@ -9,3 +9,12 @@ services:
         sync: false
       - key: FSQ_API_KEY
         sync: false
+      # CALL-E "Ask the Place". CALLE_WEBHOOK_TOKEN is any long random string:
+      # webhook deliveries are unsigned, so it is what makes the callback URL
+      # unguessable. Set CALLE_DRY_RUN=1 to exercise the flow without dialling.
+      - key: CALLE_API_KEY
+        sync: false
+      - key: CALLE_WEBHOOK_TOKEN
+        generateValue: true
+      - key: CALLE_DAILY_CALL_BUDGET
+        value: "25"

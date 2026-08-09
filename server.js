@@ -86,7 +86,8 @@ async function cached(key, ttlMs, fn){
 }
 
 app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, goog: !!GOOG, tm: !!TM, ai: !!AI, owm: !!OWM,
-  redis: redisState.configured && redisState.ok !== false, nps: !!NPS, windy: !!WINDY, nasa: !!NASA }));
+  redis: redisState.configured && redisState.ok !== false, nps: !!NPS, windy: !!WINDY, nasa: !!NASA,
+  calle: require('./calle').info() }));
 
 /* Forces a real Upstash round-trip and reports the truth. Use this rather than
    the health flag when asking "is the shared cache actually working?" */
@@ -1203,6 +1204,53 @@ app.get('/api/layer-test', async (req, res) => {
     probe('rainviewer_meta', 'https://api.rainviewer.com/public/weather-maps.json')
   ]);
   res.json(out);
+});
+
+/* ---- CALL-E: "Ask the Place" first-party FAQs ----
+   Thin wiring only; the call script, guardrails, budget and storage live in
+   calle.js. Calls are async: ask-place returns a call id, the answer lands
+   by webhook, and /api/ask-place/:id is the polling fallback. */
+const calle = require('./calle');
+
+app.post('/api/ask-place', express.json({ limit: '8kb' }), async (req, res) => {
+  try{
+    const { place, question } = req.body || {};
+    if(!place || !place.name || place.lat == null || place.lon == null)
+      return res.status(400).json({ error: 'place {name, lat, lon, phone} required' });
+    const r = await calle.askPlace({ place, question });
+    res.status(r.status || 200).json(r);
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+app.get('/api/ask-place/:id', async (req, res) => {
+  try{
+    const id = String(req.params.id || '');
+    if(!/^call_[\w-]+$/.test(id)) return res.status(400).json({ error: 'bad call id' });
+    const r = await calle.pollCall(id);
+    res.status(r.status || 200).json(r);
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+app.post('/api/place-faq', express.json({ limit: '8kb' }), async (req, res) => {
+  try{
+    const p = req.body || {};
+    if(!p.name) return res.status(400).json({ error: 'place required' });
+    res.json({ items: await calle.getFaq(p) });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* Unsigned delivery — the token in the path is the only thing separating this
+   from an open endpoint, and the body is re-verified against the API inside. */
+app.post('/api/calle/webhook/:token', express.json({ limit: '256kb' }), async (req, res) => {
+  try{
+    const r = await calle.handleWebhook({ token: req.params.token, body: req.body });
+    res.status(r.status || 200).json({ ok: r.status === 200, ...(r.error ? { error: r.error } : {}) });
+  }catch(e){
+    // 200 anyway: CALL-E retries on non-2xx, and a poisoned record would just
+    // fail again. The poll fallback still recovers the result.
+    console.error('calle webhook:', e.message);
+    res.status(200).json({ ok: false });
+  }
 });
 
 app.use(express.static(path.join(__dirname)));
