@@ -144,6 +144,74 @@
     display:block;font-family:'IBM Plex Mono',monospace;font-size:.62rem;
     color:var(--ink-soft);margin-top:3px;
   }
+  /* ---- Ask the Place: first-party answers collected by phone ---- */
+  .ask-box{margin:8px 0 2px}
+  .ask-box[hidden]{display:none}
+  .ask-panel{border:1.5px solid var(--line);border-radius:10px;padding:10px 11px;background:var(--surface-2)}
+  .ask-head{
+    display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px;
+  }
+  .ask-head h4{
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:.72rem;
+    text-transform:uppercase;letter-spacing:.08em;color:var(--sign-green);
+  }
+  .ask-note{font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft);line-height:1.5}
+  .faq-item{border-top:1px solid var(--line);padding:8px 0}
+  .faq-item:first-of-type{border-top:none;padding-top:0}
+  .faq-q{font-size:.82rem;font-weight:600;line-height:1.4;color:var(--ink)}
+  .faq-a{font-size:.82rem;line-height:1.55;color:var(--ink);margin-top:3px}
+  .faq-a.muted{color:var(--ink-soft);font-style:italic}
+  .faq-quote{
+    font-size:.78rem;line-height:1.5;color:var(--ink);border-left:3px solid var(--sun);
+    background:var(--surface);padding:5px 9px;margin:5px 0 0;border-radius:0 7px 7px 0;
+  }
+  .faq-meta{
+    display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px;
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft);
+  }
+  .faq-stamp{color:var(--sign-green);font-weight:700}
+  .faq-stamp.stale{color:var(--ink-soft)}
+  .faq-sim{border:1px solid var(--line);border-radius:99px;padding:1px 6px}
+  .faq-meta .ask-again{
+    border:1px solid var(--sign-green);background:transparent;color:var(--sign-green);
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;
+    border-radius:99px;padding:1px 7px;cursor:pointer;
+  }
+  .faq-meta .ask-again:hover{background:var(--sign-green);color:#fff}
+  .faq-item details{margin-top:5px}
+  .faq-item details summary{
+    cursor:pointer;color:var(--sign-green);font-weight:700;
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;
+  }
+  .faq-log{margin-top:5px;background:var(--surface);border-radius:7px;padding:6px 8px}
+  .faq-turn{display:flex;gap:7px;font-size:.75rem;line-height:1.5;margin-bottom:4px}
+  .faq-turn:last-child{margin-bottom:0}
+  .faq-turn .who{
+    flex:0 0 3.4em;font-family:'IBM Plex Mono',monospace;font-size:.6rem;
+    color:var(--ink-soft);padding-top:2px;text-transform:uppercase;
+  }
+  .faq-turn.bot .who{color:var(--sign-green)}
+  .ask-chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px}
+  .ask-chips button{
+    border:1.5px solid var(--line);background:var(--surface);color:var(--ink);
+    font-family:'Overpass',sans-serif;font-weight:600;font-size:.72rem;
+    border-radius:99px;padding:5px 11px;cursor:pointer;text-align:left;
+  }
+  .ask-chips button:hover{border-color:var(--sign-green);color:var(--sign-green)}
+  .ask-chips button.gen{border-style:dashed}
+  .ask-form{display:flex;gap:6px}
+  .ask-form input{
+    flex:1;min-width:0;border:1.5px solid var(--line);border-radius:9px;
+    padding:7px 10px;font:inherit;font-size:.82rem;background:var(--surface);
+  }
+  .ask-form button{
+    border:1.5px solid var(--sign-green);background:var(--sign-green);color:#fff;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.72rem;
+    text-transform:uppercase;border-radius:99px;padding:0 13px;cursor:pointer;
+  }
+  .ask-form button:disabled{opacity:.55;cursor:default}
+  .ask-err{font-size:.76rem;line-height:1.5;color:#9b2226;margin-top:6px}
+  .ask-live{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--ink);padding:4px 0}
   .poicontrols{display:flex;gap:8px;margin:0 0 10px}
   .poicontrols input{
     flex:1;min-width:0;border:1.5px solid var(--line);border-radius:9px;
@@ -845,16 +913,21 @@ const state = {
   reqToken: 0,          // invalidates stale fetches when place changes
 };
 
+/* Mirrored out of the health check so the synchronous POI renderer can decide
+   whether to offer the Ask button without awaiting a promise mid-render. */
+state.calle = null;
+
 /* is our own backend serving this page? (absent on claude.ai / pure static) */
 state.backendP = (async ()=>{
   try{
     const ctl = new AbortController();
     setTimeout(()=>ctl.abort(), 4000);
     const r = await fetch('/api/health', { signal: ctl.signal });
-    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, goog:!!j.goog, places:!!(j.fsq||j.goog), tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy, nasa:!!j.nasa }; }
+    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, goog:!!j.goog, places:!!(j.fsq||j.goog), tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy, nasa:!!j.nasa, calle:j.calle || null }; }
   }catch(e){}
-  return { ok:false, fsq:false, goog:false, places:false, tm:false, ai:false, owm:false, windy:false, nasa:false };
+  return { ok:false, fsq:false, goog:false, places:false, tm:false, ai:false, owm:false, windy:false, nasa:false, calle:null };
 })();
+state.backendP.then(be=>{ state.calle = be.calle; });
 
 /* ---------------- map ---------------- */
 const map = L.map('map', { zoomControl:false }).setView([45.5, -96.5], 4);
@@ -1750,10 +1823,13 @@ function poiDetailHTML(it, idx){
   }else{
     acts.push(`<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>`);
   }
+  if(canAsk(it))
+    acts.push(`<button class="ask-btn" data-idx="${idx}">Stored answered questions</button>`);
   const saved = state.favKeys.has(normName(it.name + state.place.name));
   acts.push(`<button class="fav-btn" data-idx="${idx}">${saved ? '★ Saved' : '☆ Save'}</button>`);
   return `<div class="poi-desc" id="desc-${idx}"></div>` + rows.join('') +
     `<div class="poi-actions chiprow" style="margin:8px 0 0">${acts.join('')}</div>` +
+    `<div class="ask-box" id="ask-${idx}" hidden></div>` +
     `<div class="deal-results" id="deals-${idx}"></div>`;
 }
 function renderPOIs(items, kind){
@@ -2016,7 +2092,251 @@ async function scanDeals(it, box){
   state.cache[cacheKey] = out;
   box.innerHTML = out;
 }
+/* ---------------- Ask the Place: first-party answers collected by phone ----------------
+   A visitor asks one factual question, the backend phones the business, and the
+   answer becomes a dated entry every later visitor sees for free. The panel is
+   therefore read-first: stored answers come before the form, because the common
+   case is that someone already asked.
+
+   Everything here treats a call as expensive and slow. Suggested questions are
+   pre-vetted server-side so a chip can't waste one; the waiting state is shown
+   rather than hidden, because 30-90 seconds of silence reads as broken; and
+   failed calls are rendered honestly instead of dropped, since "we called and
+   they weren't sure" is a real answer and hiding it would misrepresent what the
+   app actually knows. */
+const ASK_CODE_KEY = 'atlasAskCode';
+const askPlaceBody = it => ({
+  name: it.name, lat: it.lat, lon: it.lon, phone: it.phone || '',
+  addr: it.addr || '', kind: it.kind || '', gid: it.gid || '', fsqId: it.fsqId || ''
+});
+
+/* Mirrors the server's E.164 check loosely — the server decides for real, this
+   only avoids offering a button that could never work. */
+function canAsk(it){
+  const c = state.calle;
+  if(!c || !c.configured || !it || !it.phone) return false;
+  return (String(it.phone).replace(/\D/g, '').length >= 10);
+}
+
+function askHeaders(){
+  const h = { 'content-type': 'application/json' };
+  let code = '';
+  try{ code = localStorage.getItem(ASK_CODE_KEY) || ''; }catch(e){}
+  if(code) h['x-atlas-access'] = code;
+  return h;
+}
+
+function relDay(ts){
+  const days = Math.floor((Date.now() - ts) / 86400e3);
+  if(days <= 0) return 'today';
+  if(days === 1) return 'yesterday';
+  if(days < 30)  return days + ' days ago';
+  return new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric', year:'numeric' });
+}
+
+const ASK_FAIL = {
+  unclear:     'We called and asked — whoever answered wasn\'t sure.',
+  refused:     'We called and asked — they preferred not to answer over the phone.',
+  unreachable: 'We called, but the line went to voicemail. No message was left.',
+  unknown:     'We called, but the call didn\'t produce a usable answer.'
+};
+
+function faqItemHTML(e, idx, i){
+  const answered = e.answerStatus === 'answered';
+  const stale = e.expiresAt <= Date.now();
+  const body = answered
+    ? `<div class="faq-a">${esc(e.answer)}</div>` +
+      (e.evidenceQuote ? `<div class="faq-quote">“${esc(e.evidenceQuote)}”</div>` : '')
+    : `<div class="faq-a muted">${esc(ASK_FAIL[e.answerStatus] || ASK_FAIL.unknown)}</div>`;
+
+  const meta = [];
+  meta.push(answered
+    ? `<span class="faq-stamp${stale ? ' stale' : ''}">${stale ? 'Needs recheck' : 'Confirmed ' + relDay(e.collectedAt)}</span>`
+    : `<span class="faq-stamp stale">Called ${relDay(e.collectedAt)}</span>`);
+  if(e.staffConfidence === 'hedged') meta.push('staff were unsure');
+  if(e.simulated) meta.push(`<span class="faq-sim">simulated call</span>`);
+  if(!answered || stale)
+    meta.push(`<button class="ask-again" data-idx="${idx}" data-q="${esc(e.question)}">Ask again</button>`);
+
+  const log = (e.transcript || []).length
+    ? `<details><summary>Call log</summary><div class="faq-log">` +
+      e.transcript.map(t=>`<div class="faq-turn ${t.speaker === 'bot' ? 'bot' : ''}">
+           <span class="who">${t.speaker === 'bot' ? 'agent' : t.speaker === 'user' ? 'staff' : '—'}</span>
+           <span>${esc(t.text)}</span></div>`).join('') +
+      `</div></details>`
+    : '';
+
+  return `<div class="faq-item">
+      <div class="faq-q">${esc(e.question)}</div>
+      ${body}
+      <div class="faq-meta">${meta.join('')}</div>
+      ${log}
+    </div>`;
+}
+
+function renderAsk(it, box, idx){
+  const faq = it._faq || [];
+  const sugg = it._sugg || [];
+  const asked = new Set(faq.map(e=>e.question.toLowerCase()));
+  const chips = sugg.filter(s=>!asked.has(s.text.toLowerCase())).slice(0, 6);
+  const sim = state.calle && state.calle.dryRun;
+
+  box.innerHTML = `<div class="ask-panel">
+      <div class="ask-head">
+        <h4>Answered questions</h4>
+        <span class="ask-note">${faq.length ? faq.length + ' on file' : 'none yet'}</span>
+      </div>
+      ${faq.length ? faq.map((e,i)=>faqItemHTML(e, idx, i)).join('')
+                   : `<div class="ask-note" style="margin-bottom:9px">Nobody has asked this place anything yet. Ask the first question and the answer stays here for everyone.</div>`}
+      <div class="ask-note" style="margin:9px 0 5px">Ask ${esc(it.name)} one factual question — we phone them and post the answer here.</div>
+      ${chips.length ? `<div class="ask-chips">` +
+        chips.map(s=>`<button data-t="${esc(s.id || '')}" data-q="${esc(s.text)}"${s.generated ? ' class="gen"' : ''}>${esc(s.text)}</button>`).join('') +
+        `</div>` : ''}
+      <form class="ask-form">
+        <input name="q" placeholder="Or type your own question…" maxlength="180" aria-label="Your question">
+        <button type="submit">Ask</button>
+      </form>
+      <div class="ask-err" hidden></div>
+      <div class="ask-note" style="margin-top:8px">
+        ${sim ? 'Simulation mode: no phone is dialled and the answers below are generated for testing.'
+              : 'A real person answers this phone. The agent says it\'s an AI, asks one question, and hangs up.'}
+      </div>
+    </div>`;
+}
+
+async function loadAsk(it, box, idx){
+  box.innerHTML = `<div class="ask-panel"><div class="loading" style="padding:2px 0"><div class="spinner"></div>Loading answers…</div></div>`;
+  const body = JSON.stringify(askPlaceBody(it));
+  const [faq, sugg] = await Promise.all([
+    fetchT('/api/place-faq', { method:'POST', headers:{'content-type':'application/json'}, body }, 9000)
+      .then(r=>r.ok ? r.json() : { items: [] }).then(j=>j.items || []).catch(()=>[]),
+    fetchT('/api/ask-suggestions', { method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ place: askPlaceBody(it), category: state.tab }) }, 12000)
+      .then(r=>r.ok ? r.json() : { items: [] }).then(j=>j.items || []).catch(()=>[])
+  ]);
+  it._faq = faq; it._sugg = sugg;
+  renderAsk(it, box, idx);
+}
+
+function askError(box, msg, offerCode){
+  const el = box.querySelector('.ask-err');
+  if(!el) return;
+  el.hidden = false;
+  el.innerHTML = esc(msg) + (offerCode
+    ? `<form class="ask-form" style="margin-top:6px">
+         <input name="code" placeholder="Access code" aria-label="Access code">
+         <button type="submit">Unlock</button>
+       </form>` : '');
+}
+
+async function submitAsk(it, box, idx, payload){
+  const form = box.querySelector('.ask-form');
+  const btn = form && form.querySelector('button');
+  if(btn) btn.disabled = true;
+  const err = box.querySelector('.ask-err');
+  if(err){ err.hidden = true; err.textContent = ''; }
+
+  const { _label, ...ask } = payload;
+  let j = {};
+  try{
+    const r = await fetchT('/api/ask-place', { method:'POST', headers: askHeaders(),
+      body: JSON.stringify({ place: askPlaceBody(it), ...ask }) }, 25000);
+    j = await r.json().catch(()=>({}));
+    if(r.status === 401){ if(btn) btn.disabled = false; return askError(box, j.error || 'This feature is locked.', true); }
+    if(!r.ok && r.status !== 202){ if(btn) btn.disabled = false; return askError(box, j.error || ('Request failed (' + r.status + ')')); }
+  }catch(e){
+    if(btn) btn.disabled = false;
+    return askError(box, 'Could not reach the server. Try again in a moment.');
+  }
+
+  // already answered by an earlier caller — nothing to wait for
+  if(j.reused && j.entry){
+    it._faq = [j.entry, ...(it._faq || []).filter(e=>e.qHash !== j.entry.qHash)];
+    return renderAsk(it, box, idx);
+  }
+  if(!j.callId){ if(btn) btn.disabled = false; return askError(box, j.error || 'The call could not be started.'); }
+  waitForAnswer(it, box, idx, j.callId, payload.question || payload._label || '');
+}
+
+/* A phone call takes 30-90 s. The wait is shown, not hidden — a silent minute
+   reads as a hung page, and the call is the thing worth watching. */
+function waitForAnswer(it, box, idx, callId, label){
+  const panel = box.querySelector('.ask-panel');
+  if(panel) panel.insertAdjacentHTML('beforeend',
+    `<div class="ask-live"><div class="spinner"></div><span>Calling ${esc(it.name)} now…${label ? ' ' + esc(label) : ''}</span></div>`);
+  clearTimeout(it._askTimer);
+  const started = Date.now();
+
+  const tick = async ()=>{
+    if(!box.isConnected) return;                         // list re-rendered under us
+    try{
+      const r = await fetchT('/api/ask-place/' + encodeURIComponent(callId), {}, 9000);
+      const j = await r.json().catch(()=>({}));
+      if(j.state === 'done' && j.entry){
+        it._faq = [j.entry, ...(it._faq || []).filter(e=>e.qHash !== j.entry.qHash)];
+        return renderAsk(it, box, idx);
+      }
+    }catch(e){}
+    if(Date.now() - started > 180000){                   // give up, don't spin forever
+      renderAsk(it, box, idx);
+      return askError(box, 'The call is taking longer than expected. Reopen this panel shortly to see the answer.');
+    }
+    it._askTimer = setTimeout(tick, 5000);
+  };
+  it._askTimer = setTimeout(tick, 5000);
+}
+
+contentEl.addEventListener('submit', ev=>{
+  const form = ev.target.closest('.ask-form');
+  if(!form || !state.currentPOIs) return;
+  ev.preventDefault();
+  const box = form.closest('.ask-box');
+  if(!box) return;
+  const idx = +box.id.split('-')[1];
+  const it = state.currentPOIs[idx];
+  if(!it) return;
+
+  const codeField = form.elements.code;
+  if(codeField){                                          // the unlock form, not the question
+    try{ localStorage.setItem(ASK_CODE_KEY, codeField.value.trim()); }catch(e){}
+    const err = box.querySelector('.ask-err');
+    if(err){ err.hidden = true; err.innerHTML = ''; }
+    return;
+  }
+  const q = (form.elements.q.value || '').trim();
+  if(q) submitAsk(it, box, idx, { question: q });
+});
+
 contentEl.addEventListener('click', ev=>{
+  const ab = ev.target.closest('.ask-btn');
+  if(ab && state.currentPOIs){
+    const idx = +ab.dataset.idx;
+    const it = state.currentPOIs[idx], box = $('ask-' + idx);
+    if(it && box){
+      box.hidden = !box.hidden;
+      if(!box.hidden && !it._faq) loadAsk(it, box, idx);
+      else if(!box.hidden) renderAsk(it, box, idx);
+    }
+    return;
+  }
+  const chip = ev.target.closest('.ask-chips button');
+  if(chip && state.currentPOIs){
+    const box = chip.closest('.ask-box');
+    const idx = box ? +box.id.split('-')[1] : -1;
+    const it = state.currentPOIs[idx];
+    if(it && box) submitAsk(it, box, idx, chip.dataset.t
+      ? { templateId: chip.dataset.t, _label: chip.dataset.q }
+      : { question: chip.dataset.q });
+    return;
+  }
+  const again = ev.target.closest('.ask-again');
+  if(again && state.currentPOIs){
+    const box = again.closest('.ask-box');
+    const idx = box ? +box.id.split('-')[1] : -1;
+    const it = state.currentPOIs[idx];
+    if(it && box) submitAsk(it, box, idx, { question: again.dataset.q });
+    return;
+  }
   const fb = ev.target.closest('.fav-btn');
   if(fb && state.currentPOIs){
     const it = state.currentPOIs[+fb.dataset.idx];

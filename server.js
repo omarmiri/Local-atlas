@@ -328,6 +328,24 @@ function mergePlaces(lists){
   return out.sort((a, b) => a.dist - b.dist);
 }
 
+/* ---- demo place ----
+   A fictitious business that exists so the CALL-E demo dials a line we own
+   instead of bothering a real one. The number lives in DEMO_PLACE_PHONE and is
+   never committed. It only appears for searches near its own coordinates and
+   in its own category, so it cannot turn up in an unrelated city, and it is
+   flagged `demo: true` so the UI can label it as not a real business. */
+const DEMO = process.env.DEMO_PLACE_PHONE ? {
+  name:     process.env.DEMO_PLACE_NAME || 'Atlas Test Kitchen (demo)',
+  lat:      parseFloat(process.env.DEMO_PLACE_LAT || 'NaN'),
+  lon:      parseFloat(process.env.DEMO_PLACE_LON || 'NaN'),
+  category: process.env.DEMO_PLACE_CATEGORY || 'food',
+  kind:     process.env.DEMO_PLACE_KIND || 'demo restaurant',
+  addr:     process.env.DEMO_PLACE_ADDR || '',
+  phone:    process.env.DEMO_PLACE_PHONE,
+  website:  '', hours: '', openNow: null, rating: null, src: 'demo', demo: true
+} : null;
+const demoUsable = () => DEMO && Number.isFinite(DEMO.lat) && Number.isFinite(DEMO.lon);
+
 app.get('/api/places', async (req, res) => {
   try{
     if(!FSQ && !GOOG) return res.status(503).json({ error: 'no places key set (GOOGLE_API_KEY or FSQ_API_KEY)' });
@@ -1214,11 +1232,28 @@ const calle = require('./calle');
 
 app.post('/api/ask-place', express.json({ limit: '8kb' }), async (req, res) => {
   try{
-    const { place, question } = req.body || {};
+    const { place, question, templateId } = req.body || {};
     if(!place || !place.name || place.lat == null || place.lon == null)
       return res.status(400).json({ error: 'place {name, lat, lon, phone} required' });
-    const r = await calle.askPlace({ place, question });
+    const r = await calle.askPlace({ place, question, templateId,
+      accessCode: req.get('x-atlas-access') || '' });
     res.status(r.status || 200).json(r);
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* Lets the unlock modal tell a wrong code from a working one without having to
+   start a call to find out. Reveals only whether the code matches. */
+app.post('/api/ask-access', express.json({ limit: '2kb' }), (req, res) => {
+  res.json({ ok: calle.accessOk((req.body || {}).code || '') });
+});
+
+/* Question chips for one place: Gemini's place-specific suggestions first, then
+   the fixed templates. POST because it takes the place object, and because the
+   suggestions are per-place rather than per-category and so aren't cacheable. */
+app.post('/api/ask-suggestions', express.json({ limit: '4kb' }), async (req, res) => {
+  try{
+    const { place, category } = req.body || {};
+    res.json({ items: await calle.suggestQuestions(place || {}, String(category || '')) });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 

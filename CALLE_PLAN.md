@@ -99,21 +99,48 @@ unauthenticated webhook returns 401.
 
 ---
 
-## 2. Before the first real call — **[next, ~15 min]** ⚠️ blocking
+## 2. Environment — **[done, except the webhook token]**
 
 Set in the **Render dashboard** (`render.yaml`'s `generateValue` only applies on a fresh
-blueprint sync, so an existing service won't pick it up):
+blueprint sync, so an existing service won't pick it up). Every CALL-E setting is read under
+**both** `CALLE_FOO` and `CALL-E-FOO`, because the key was deployed hyphenated and a
+hyphenated name cannot be reached by `process.env.CALLE_API_KEY` dot-access.
 
-- `CALLE_API_KEY` — from https://dashboard.heycall-e.com/account/api-keys
-- `CALLE_WEBHOOK_TOKEN` — any long random string; it is the only thing making the webhook
-  URL unguessable
+| Variable | State |
+|---|---|
+| `CALL-E-API-KEY` | set ✅ |
+| `CALL-E-DRY-RUN=1` | **set this while building** — simulates every call, dials nothing |
+| `CALL-E-WEBHOOK-TOKEN` | not set; any long random string, the only thing making the webhook URL unguessable |
+| `CALL-E-ACCESS-CODE` | not set — and while it is unset, every real call attempt is refused |
 
-Then confirm `/api/health` shows `calle.configured: true` and `calle.webhook: true`
-(`webhook` requires `RENDER_EXTERNAL_URL`, which Render injects automatically).
+⚠️ **The access code and the dry-run flag are the only two things standing between a chip
+click and a real phone ringing.** With no access code the feature is closed, which is the
+safe default. Setting an access code *without* `CALL-E-DRY-RUN=1` arms real dialling.
 
 **Do the first live call against a phone you own**, not a business. Authenticate the CLI
 (`npm install -g @call-e/cli`, `calle auth login`) if you want to watch call state
 independently of the app.
+
+### There is no vendor sandbox — we simulate locally instead
+
+Checked and ruled out: the OpenAPI spec exposes a single production server and no test flag
+on `POST /v1/calls`, and `test-api.heycall-e.com` is a live staging mirror that still dials a
+real phone and wants its own key.
+
+So `CALLE_DRY_RUN=1` is the sandbox, and it now earns the name. It runs the entire pipeline
+— validation, moderation, dedupe, budget, publish, FAQ storage — against **any** place with
+a callable number, and produces a transcript in the same `CallTranscriptTurn` shape the real
+API returns, so nothing downstream can tell a simulated call from a real one. Gemini writes
+the dialogue from the actual place and question; without a Gemini key it falls back to a
+locally built transcript, because a simulator that needs a second API to work isn't one.
+
+Outcomes are weighted rather than always-success (74% `answered`, 13% `unclear`, 8%
+`unreachable`, 5% `refused`) and are deterministic in place+question, so a given card behaves
+the same way every time it's opened during a demo. `CALLE_SIM_OUTCOME` pins one outright;
+`CALLE_SIM_DURATION_MS` shortens the fake 18-second call.
+
+This is why no fake shop or throwaway number had to be arranged: every POI on the explorer
+page that carries a phone number is already a valid target.
 
 ---
 
@@ -130,41 +157,42 @@ of a wasted credit during judging. Add a courtesy window too (no calls before 10
 
 ---
 
-## 4. Frontend — **[next, ~3–4 h]** — the largest remaining piece
+## 4. Frontend — **[done]**
 
-All of it lands in `index.html`, in and around `poiDetailHTML(it, idx)` (~line 1738), which
-already renders the expanded place card and is where `it.phone` is displayed today.
+All of it lands in `index.html`, in and around `poiDetailHTML(it, idx)`, which renders the
+expanded place card and is where `it.phone` is displayed.
 
-1. **"Ask the Place" button** in the `.poi-actions` chip row, shown only when
-   `normalizeE164(it.phone)` would succeed. Opens a focused question form.
-2. **Suggested question templates** as chips, category-aware — restaurants get *high chairs
-   / walk-ins / outdoor seating*, parks get *stroller-friendly / restrooms / parking*,
-   attractions get *outside food / reservations*. This is the cheapest lever on answer
-   quality: templates are pre-validated, so users can't waste a credit on a subjective
-   question. Keep a free-text box alongside it and log which people choose — that's one of
-   the stated learning goals, and it answers itself if you instrument it.
-3. **Waiting state** — poll `GET /api/ask-place/:id` every 5 s with a clear "calling now…"
-   affordance. A phone call is slow; make the wait legible rather than hiding it.
-4. **First-party FAQ panel** — rendered from `POST /api/place-faq`, visually distinct from
-   reviews and AI recommendations. Each entry shows the answer, the **"Confirmed <date>"**
-   stamp, an expandable transcript, and a source label. `unclear`/`unreachable` outcomes
-   should show honestly ("we called, they weren't sure") — that transparency is a feature,
-   and it's what separates this from a review scrape.
+1. **"Stored answered questions" button** in the `.poi-actions` chip row, shown only when the
+   backend reports CALL-E configured and the place has a 10+ digit number. Toggles the panel.
+2. **Question chips** — Gemini proposes place-specific questions (`POST /api/ask-suggestions`),
+   the fixed `TEMPLATES` follow as the floor. A generated question is *not* trusted for having
+   been generated: each one goes back through the same `validateQuestion()` gate free text
+   does, and anything that fails is dropped rather than shown as a chip. Generated chips carry
+   no template id, so asking one takes the untrusted path and is moderated again at call time.
+   Free-text box alongside, refused with a rewrite nudge when it fails.
+3. **Waiting state** — polls `GET /api/ask-place/:id` every 5 s behind a "Calling <place>
+   now…" spinner, giving up after 3 minutes rather than spinning forever.
+4. **Answered-questions panel** — read-first, because the common case is that someone already
+   asked. Each entry shows the answer, the evidence quote, a **"Confirmed today / N days ago /
+   Needs recheck"** stamp, an expandable **call log** with agent/staff turns, and an **Ask
+   again** button on stale or unanswered entries. `unclear`/`unreachable`/`refused` render
+   honestly ("we called, they weren't sure") rather than being dropped — that transparency is
+   what separates this from a review scrape.
+5. **Simulated answers say so**, on the entry and in the panel footer. `publish()` stamps
+   `simulated` onto the FAQ entry. A simulated answer presented as a real one is the one thing
+   this feature must never do.
 
-Everything the panel needs is already in the stored entry: `answer`, `evidenceQuote`,
+Everything the panel needs was already in the stored entry: `answer`, `evidenceQuote`,
 `collectedAt`, `expiresAt`, `transcript`, `confidence`, `answerStatus`.
 
 ---
 
-## 5. Freshness + moderation — **[next, ~1–2 h]**
+## 5. Freshness + moderation — **[mostly done]**
 
-- **Freshness labels** from `collectedAt`/`expiresAt`: *Confirmed today* · *Confirmed this
-  month* · *Needs recheck*. The data is stored; this is presentation only.
-- **Recheck button** on stale entries → re-runs `askPlace` (dedupe already allows it once
-  the entry expires).
-- **Admin view** at `/admin?token=…` listing failed, `unclear`, and `unreachable` calls with
-  transcripts. Useful during judging as a "here's what actually happened" exhibit, and it's
-  the honest way to show the failure modes rather than only demoing the happy path.
+- **Freshness labels** and the **Ask again** button shipped with §4.
+- **[next]** **Admin view** at `/admin?token=…` listing failed, `unclear`, and `unreachable`
+  calls with transcripts. Useful during judging as a "here's what actually happened" exhibit,
+  and it's the honest way to show the failure modes rather than only demoing the happy path.
 
 ---
 
@@ -205,8 +233,8 @@ answer. Frame it that way rather than treating it as a failure.
 
 ## Sequence
 
-§2 (blocking, 15 min) → §3 (30 min, protects credits) → §4 (3–4 h, the demo itself) →
-§6 curation and pre-calls → §5 if time allows.
+§1, §2 and §4 are done; the whole loop runs against the simulator on any POI with a phone.
 
-§4 is the critical path. §3 before §4 so that early manual testing doesn't waste credits on
-closed businesses.
+Remaining, in order: **§3** (don't dial closed businesses — 30 min, and it must land before
+the first real call, not after) → set `CALL-E-WEBHOOK-TOKEN` and `CALL-E-ACCESS-CODE` and
+drop `CALL-E-DRY-RUN` → §6 curation and pre-calls → §5 admin view if time allows.
