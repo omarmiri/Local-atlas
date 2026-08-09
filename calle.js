@@ -40,7 +40,7 @@ const PUBLIC_URL = (env('PUBLIC_BASE_URL', 'RENDER_EXTERNAL_URL')).replace(/\/$/
 const DRY_RUN = calleEnv('DRY_RUN') === '1';
 const DAILY_BUDGET = parseInt(calleEnv('DAILY_CALL_BUDGET') || '25', 10);
 const FAQ_TTL_DAYS = parseInt(calleEnv('FAQ_TTL_DAYS') || '90', 10);
-const CALLER_ID = calleEnv('CALLER_IDENTITY') || 'Local Atlas, a local guide app';
+const CALLER_ID = calleEnv('CALLER_IDENTITY') || 'Local Atlas, a local guide site on the web';
 const ACCESS_CODE = calleEnv('ACCESS_CODE');
 const REAL_CODE = env('REAL_CALL_ACCESS_CODE', 'REAL-CALL-ACCESS-CODE');
 const SIM_FORCE = calleEnv('SIM_OUTCOME');                    // pin a sim outcome for demos
@@ -353,21 +353,26 @@ async function moderateQuestion(question, place){
    OPENER is defined once and used by the script, the simulator, and the
    confirmation preview. If the preview showed a different disclosure from the
    one the agent actually reads out, the confirmation would be a lie. */
-const OPENER = `Hi, I'm an AI assistant calling on behalf of ${CALLER_ID}. I have one quick question to confirm a detail on your public listing — is now a good moment?`;
+/* Says who is really on the line and why, in that order. The AI disclosure
+   stays first: everything after it is context, and context is not consent.
+   Naming the customer as the reason for the call is also the honest framing —
+   a person did ask this, which is what makes the interruption reasonable. */
+const OPENER = `Hi, I'm an AI assistant calling for a customer who found you on ${CALLER_ID}, and isn't able to make this call themselves. I have one quick question to confirm a detail on your public listing — is now a good moment?`;
 
 function buildTask({ place, question, phone }){
   return [
     `Call ${place.name}${place.addr ? ` at ${place.addr}` : ''} on ${phone}.`,
     ``,
-    `You are an automated assistant calling on behalf of ${CALLER_ID}. Follow these rules exactly:`,
+    `You are an automated assistant calling on behalf of a customer of ${CALLER_ID}, who asked this question and cannot make the call themselves. Follow these rules exactly:`,
     `1. Open by saying: "${OPENER}"`,
     `2. If they are busy or ask you to call back, thank them, say you will try later, and end the call. Do not push.`,
     `3. Ask exactly this one question and nothing else: "${question}"`,
     `4. If the answer is ambiguous, you may ask at most one short clarifying follow-up. Do not ask anything unrelated.`,
     `5. Never guess, infer, or fill in an answer they did not give. "I don't know" and "we're not sure" are valid outcomes — record them as unclear.`,
     `6. Do not negotiate, book, order, hold, cancel, or promise anything, and do not give out or collect personal or payment details.`,
-    `7. If you reach voicemail, an automated menu, or a disconnected line, end the call without leaving a message.`,
-    `8. Thank them and end the call as soon as you have the answer. Keep the whole call under two minutes.`
+    `7. If they ask who the customer is, say truthfully that you do not have their details — the question came in through the listing on ${CALLER_ID}. Never invent a name, a booking, or a reason on their behalf.`,
+    `8. If you reach voicemail, an automated menu, or a disconnected line, end the call without leaving a message.`,
+    `9. Thank them and end the call as soon as you have the answer. Keep the whole call under two minutes.`
   ].join('\n');
 }
 
