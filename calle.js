@@ -631,12 +631,38 @@ async function askPlace({ place, question, templateId, accessCode, confirmed }){
   const phone = normalizeE164(place.phone);
   if(!phone) return { error: 'No callable public phone number is listed for this place.', status: 422 };
 
+  /* Both courtesy rules below exist to protect a stranger who did not opt in.
+     Neither applies to the demo line, because we own it — and this is keyed on
+     the dialled number rather than on the client's `demo` flag, which anyone
+     could set on a real business to call it at 3am. */
+  const ownLine = normalizeE164(process.env.DEMO_PLACE_PHONE || '');
+  const isOwnLine = !!ownLine && phone === ownLine;
+
+  /* ---- don't dial a closed business ----
+     The app already knows whether a place is open — `openNow` comes from
+     Google and Foursquare — so spending a credit on a phone nobody will answer
+     is a decision we can simply decline to make. `null` means we don't know,
+     and not knowing is not a reason to refuse: only an explicit false blocks.
+
+     The courtesy window is the part that isn't about credits. A place can be
+     open at 06:30 and still not want an automated call then, and "technically
+     open" is not the same as "a reasonable moment to ring a stranger". Callers
+     are US/Canada by construction (normalizeE164 only accepts NANP or E.164),
+     but the clock we have is the server's, so this is deliberately generous
+     rather than precise. */
+  if(live && !isOwnLine && place.openNow === false)
+    return { error: `${place.name} looks closed right now. We'll only call while they're open — try again during opening hours.`, status: 409, closed: true };
+
+  const hourET = (Number(new Date().toISOString().slice(11, 13)) + 24 - 5) % 24;
+  if(live && !isOwnLine && (hourET < 10 || hourET >= 20))
+    return { error: 'Calls are only placed between 10am and 8pm Eastern, so a real person is not rung at an unreasonable hour. Try again during the day.', status: 409, outsideWindow: true };
+
   const pk = placeKey(place), qh = qHash(v.question);
 
   // already answered recently — reuse rather than re-dial
   const faq = (await docGet(faqKey(pk))) || [];
   const known = faq.find(e => e.qHash === qh && e.expiresAt > Date.now());
-  if(known) return { status: 200, reused: true, entry: known };
+  if(known) return { status: 200, reused: true, entry: publicEntry(known) };
 
   const lock = await docGet(lockKey(pk, qh));
   if(lock) return { status: 202, callId: lock.callId, state: 'in_progress', deduped: true };
@@ -734,7 +760,7 @@ function webhookUrl(){
 async function pollCall(callId){
   const pending = await docGet(callKey(callId));
   if(!pending) return { error: 'Unknown call id.', status: 404 };
-  if(pending.state === 'done') return { status: 200, state: 'done', entry: pending.entry };
+  if(pending.state === 'done') return { status: 200, state: 'done', entry: publicEntry(pending.entry) };
 
   /* Branch on the record, not on DRY_RUN: with the real-call code in play a
      simulated call and a live one can be in flight at the same time, and the
@@ -753,7 +779,7 @@ async function pollCall(callId){
       simulated: true,
       status: 'completed'
     });
-    return { status: 200, state: 'done', entry };
+    return { status: 200, state: 'done', entry: publicEntry(entry) };
   }
 
   const c = await client();
@@ -766,13 +792,13 @@ async function pollCall(callId){
     const run = await c.goals.getRun(GOAL_ID, pending.goalRunId);
     if(run.result === null && run.error === null)
       return { status: 200, state: run.status || 'in_progress', callId };
-    return { status: 200, state: 'done', entry: await ingestGoalRun(pending, run) };
+    return { status: 200, state: 'done', entry: publicEntry(await ingestGoalRun(pending, run)) };
   }
 
   const call = await c.calls.get(callId);
   if(call.status === 'queued' || call.status === 'in_progress')
     return { status: 200, state: call.status, callId };
-  return { status: 200, state: 'done', entry: await ingest(call) };
+  return { status: 200, state: 'done', entry: publicEntry(await ingest(call)) };
 }
 
 /* A Run reports failure as a typed code instead of a transcript we can read,
@@ -837,6 +863,53 @@ async function ingest(call){
   });
 }
 
+/* ---- public-facing call summary ----
+   The raw transcript never goes to the browser. It is somebody's actual words
+   on a phone call they did not ask to be part of, it reads as surveillance
+   rather than as a source, and it is the least flattering way to present a
+   thing the app did well. So the transcript stays in storage for the operator
+   view, and visitors get two or three plain sentences describing how the call
+   went — written from the transcript, grounded in it, and never adding a fact
+   nobody said.
+
+   Falls back to CALL-E's own summary when Gemini is unavailable, and to
+   nothing at all when neither is: no summary is fine, an invented one is not. */
+async function summarizeCall({ question, placeName, result, transcript, apiSummary }){
+  const turns = (transcript || [])
+    .map(t => `${t.speaker === 'bot' ? 'Agent' : t.speaker === 'user' ? 'Staff' : '—'}: ${t.text}`)
+    .join('\n').slice(0, 6000);
+  if(!AI_KEY || !turns) return String(apiSummary || '').slice(0, 400);
+
+  const prompt = [
+    'Summarise a short phone call for the visitors of a local guide website.',
+    'An AI agent called a business to confirm one factual detail on its listing.',
+    '',
+    `Business: ${placeName}`,
+    `Question asked: ${question}`,
+    `Outcome recorded: ${result.answer_status}`,
+    '',
+    'Transcript:',
+    turns,
+    '',
+    'Write 2-3 plain sentences, past tense, third person, for someone deciding',
+    'whether to trust this answer. Say what was asked, what the business said,',
+    'and any caveat worth knowing (they were unsure, it depends on the season,',
+    'only part of the question was answered).',
+    'Use ONLY what is in the transcript. Never add a fact nobody stated.',
+    'Do not quote at length, do not use speaker labels, do not mention "the',
+    'transcript" or "the AI agent" — write it as a note to a reader.',
+    'If the call reached voicemail or nobody usable, say so plainly in one sentence.',
+    'Return the summary text only.'
+  ].join('\n');
+
+  try{
+    const txt = await geminiText(prompt, { maxOutputTokens: 220, temperature: 0.3 });
+    return txt.replace(/\s+/g, ' ').trim().slice(0, 600) || String(apiSummary || '').slice(0, 400);
+  }catch(e){
+    return String(apiSummary || '').slice(0, 400);
+  }
+}
+
 async function publish(pending, result, meta){
   const now = Date.now();
   const answered = result.answer_status === 'answered';
@@ -857,6 +930,11 @@ async function publish(pending, result, meta){
     // only a real answer earns a long life; everything else is retryable soon
     expiresAt: now + (answered ? FAQ_TTL_DAYS : 1) * DAY,
     summary: meta.summary || '',
+    // the visitor-facing narration; see summarizeCall
+    callSummary: await summarizeCall({
+      question: pending.question, placeName: pending.placeName, result,
+      transcript: meta.transcript, apiSummary: meta.summary
+    }),
     confidence: meta.confidence || null,
     transcript: (meta.transcript || []).slice(0, 60),
     failureCode: meta.failureCode || null,
@@ -925,15 +1003,42 @@ async function goalStatus(){
   }
 }
 
+/* What a visitor is allowed to see. The transcript, the number we dialled and
+   the raw failure text stay server-side: they are operator data, and shipping
+   a stranger's phone conversation to every visitor of the page is not a
+   feature. `callSummary` exists precisely so this list has nothing to hide
+   behind. Storage keeps everything — see listCalls for the operator view. */
+const PUBLIC_FIELDS = ['qHash', 'question', 'answer', 'answerStatus', 'evidenceQuote',
+  'staffConfidence', 'source', 'simulated', 'viaGoal', 'collectedAt', 'expiresAt',
+  'callSummary', 'confidence'];
+
+const publicEntry = e => {
+  const out = {};
+  for(const k of PUBLIC_FIELDS) if(e[k] !== undefined) out[k] = e[k];
+  // presence, not content — lets the UI say a recording exists without shipping it
+  out.hasTranscript = !!(e.transcript && e.transcript.length);
+  return out;
+};
+
 async function getFaq(place){
   const faq = (await docGet(faqKey(placeKey(place)))) || [];
-  return faq.filter(e => e.expiresAt > Date.now() || e.answerStatus === 'answered');
+  return faq
+    .filter(e => e.expiresAt > Date.now() || e.answerStatus === 'answered')
+    .map(publicEntry);
+}
+
+/* Operator view — everything, transcripts included, behind the real-call code.
+   This is where the call logs went when they came off the public page. */
+async function listCalls(place){
+  const faq = (await docGet(faqKey(placeKey(place)))) || [];
+  return faq;
 }
 
 module.exports = {
   configured, askPlace, pollCall, handleWebhook, getFaq,
   placeKey, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
   realCallOk, templatesFor, moderateQuestion, suggestQuestions, listGoals, goalStatus,
+  listCalls, publicEntry, summarizeCall,
   simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA, OPENER,
   info: () => ({
     configured: configured(), dryRun: DRY_RUN, webhook: !!webhookUrl(),

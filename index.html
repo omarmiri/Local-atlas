@@ -183,14 +183,11 @@
     cursor:pointer;color:var(--sign-green);font-weight:700;
     font-family:'IBM Plex Mono',monospace;font-size:.6rem;
   }
-  .faq-log{margin-top:5px;background:var(--surface);border-radius:7px;padding:6px 8px}
-  .faq-turn{display:flex;gap:7px;font-size:.75rem;line-height:1.5;margin-bottom:4px}
-  .faq-turn:last-child{margin-bottom:0}
-  .faq-turn .who{
-    flex:0 0 3.4em;font-family:'IBM Plex Mono',monospace;font-size:.6rem;
-    color:var(--ink-soft);padding-top:2px;text-transform:uppercase;
+  .faq-note p{
+    font-size:.78rem;line-height:1.6;color:var(--ink-soft);
+    margin-top:5px;padding:7px 10px;background:var(--surface);
+    border-left:3px solid var(--sign-green);border-radius:0 7px 7px 0;
   }
-  .faq-turn.bot .who{color:var(--sign-green)}
   .ask-chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px}
   .ask-chips button{
     border:1.5px solid var(--line);background:var(--surface);color:var(--ink);
@@ -815,7 +812,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.2</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.3</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -1219,7 +1216,19 @@ async function loadPlace(place, { fly=true } = {}){
 document.querySelectorAll('.tab').forEach(t=>{
   t.addEventListener('click', ()=> selectTab(t.dataset.tab));
 });
-const TAB_GROUP_DEFAULT = 'now';
+/* Explore is the landing group: someone who has just told the app where they
+   are is asking "what's around me", not "what's the weather". Weather is one
+   click away and was never the reason anyone opened this.
+
+   A remembered choice still wins — applyTabGroup writes a cookie — so this
+   only decides where a first-time visitor arrives. */
+const TAB_GROUP_DEFAULT = 'explore';
+
+/* Within a group, the first tab in DOM order is not always the one worth
+   landing on. Services leads Explore in the markup but "See & Do" is what a
+   visitor actually came for. */
+const GROUP_LANDING_TAB = { explore: 'attractions' };
+
 function applyTabGroup(group){
   state.tabGroup = group;
   document.cookie = 'tabgroup=' + group + ';path=/;max-age=' + (365*86400);
@@ -1234,7 +1243,12 @@ function applyTabGroup(group){
     if(visible && !firstVisible) firstVisible = t.dataset.tab;
   });
   const cur = document.querySelector('#tabs .tab[data-tab="'+state.tab+'"]');
-  if(firstVisible && (!cur || cur.dataset.group !== group)) selectTab(firstVisible);
+  if(firstVisible && (!cur || cur.dataset.group !== group)){
+    const preferred = GROUP_LANDING_TAB[group];
+    const usable = preferred &&
+      document.querySelector('#tabs .tab[data-tab="'+preferred+'"][data-group="'+group+'"]');
+    selectTab(usable ? preferred : firstVisible);
+  }
 }
 function selectTab(name, force){
   if(name === state.tab && !force) return;
@@ -2166,9 +2180,13 @@ async function scanDeals(it, box){
    they weren't sure" is a real answer and hiding it would misrepresent what the
    app actually knows. */
 const ASK_CODE_KEY = 'atlasAskCode';
+/* openNow and hours ride along so the server can decline to dial a business
+   that is closed — see the courtesy window in calle.js. */
 const askPlaceBody = it => ({
   name: it.name, lat: it.lat, lon: it.lon, phone: it.phone || '',
-  addr: it.addr || '', kind: it.kind || '', gid: it.gid || '', fsqId: it.fsqId || ''
+  addr: it.addr || '', kind: it.kind || '', gid: it.gid || '', fsqId: it.fsqId || '',
+  openNow: it.openNow === true || it.openNow === false ? it.openNow : isOpenNow(it.hours),
+  hours: it.hours || ''
 });
 
 /* Mirrors the server's E.164 check loosely — the server decides for real, this
@@ -2226,19 +2244,20 @@ function faqItemHTML(e, idx, i){
   if(!answered || stale)
     meta.push(`<button class="ask-again" data-idx="${idx}" data-q="${esc(e.question)}">Ask again</button>`);
 
-  const log = (e.transcript || []).length
-    ? `<details><summary>Call log</summary><div class="faq-log">` +
-      e.transcript.map(t=>`<div class="faq-turn ${t.speaker === 'bot' ? 'bot' : ''}">
-           <span class="who">${t.speaker === 'bot' ? 'agent' : t.speaker === 'user' ? 'staff' : '—'}</span>
-           <span>${esc(t.text)}</span></div>`).join('') +
-      `</div></details>`
+  /* The raw transcript is deliberately not sent to the browser — it is a
+     stranger's phone conversation, and publishing it verbatim reads as
+     surveillance rather than as a source. This is the written account of the
+     call instead: grounded in the transcript, but a note to a reader. */
+  const note = e.callSummary
+    ? `<details class="faq-note"><summary>How the call went</summary>
+         <p>${esc(e.callSummary)}</p></details>`
     : '';
 
   return `<div class="faq-item">
       <div class="faq-q">${esc(e.question)}</div>
       ${body}
       <div class="faq-meta">${meta.join('')}</div>
-      ${log}
+      ${note}
     </div>`;
 }
 

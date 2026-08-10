@@ -1294,6 +1294,18 @@ app.post('/api/ask-suggestions', express.json({ limit: '4kb' }), async (req, res
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
+/* Operator view of one place: every stored call including the transcripts that
+   no longer go to the public panel. Behind the real-call code. */
+app.post('/api/calle/calls', express.json({ limit: '8kb' }), async (req, res) => {
+  try{
+    if(!calle.realCallOk(req.get('x-atlas-access') || ''))
+      return res.status(401).json({ error: 'access code required' });
+    const p = req.body || {};
+    if(!p.name) return res.status(400).json({ error: 'place required' });
+    res.json({ items: await calle.listCalls(p) });
+  }catch(e){ res.status(calleErrStatus(e)).json(calleErrBody(e)); }
+});
+
 /* Booleans only, so it needs no code — it exists to settle whether the
    configured Goal is actually published, which the dashboard label and the
    authoring agent disagree about. */
