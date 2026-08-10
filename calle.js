@@ -40,7 +40,7 @@ const PUBLIC_URL = (env('PUBLIC_BASE_URL', 'RENDER_EXTERNAL_URL')).replace(/\/$/
 const DRY_RUN = calleEnv('DRY_RUN') === '1';
 const DAILY_BUDGET = parseInt(calleEnv('DAILY_CALL_BUDGET') || '25', 10);
 const FAQ_TTL_DAYS = parseInt(calleEnv('FAQ_TTL_DAYS') || '90', 10);
-const CALLER_ID = calleEnv('CALLER_IDENTITY') || 'Local Atlas, a local guide site on the web';
+const CALLER_ID = calleEnv('CALLER_IDENTITY') || 'Local Atlas, a local guide website';
 const ACCESS_CODE = calleEnv('ACCESS_CODE');
 const REAL_CODE = env('REAL_CALL_ACCESS_CODE', 'REAL-CALL-ACCESS-CODE');
 const SIM_FORCE = calleEnv('SIM_OUTCOME');                    // pin a sim outcome for demos
@@ -369,7 +369,11 @@ async function moderateQuestion(question, place){
    stays first: everything after it is context, and context is not consent.
    Naming the customer as the reason for the call is also the honest framing —
    a person did ask this, which is what makes the interruption reasonable. */
-const OPENER = `Hi, I'm an AI assistant calling for a customer who found you on ${CALLER_ID}, and isn't able to make this call themselves. I have one quick question to confirm a detail on your public listing — is now a good moment?`;
+/* Kept short on purpose. The first live calls showed this taking ~16 seconds
+   to deliver, during which the person who answered could not get a word in —
+   long enough that their own greeting was steamrolled and the transcript
+   recorded "Amboy" as "Envoy". Every clause here has to earn its airtime. */
+const OPENER = `Hi, I'm an AI assistant calling for a customer who found you on ${CALLER_ID}, and can't make this call themselves. One quick question about your listing — is now a good moment?`;
 
 function buildTask({ place, question, phone }){
   return [
@@ -377,17 +381,23 @@ function buildTask({ place, question, phone }){
     ``,
     `You are an automated assistant calling on behalf of a customer of ${CALLER_ID}, who asked this question and cannot make the call themselves.`,
     ``,
-    /* The API has no voice or accent parameter — CreateCallRequest is
-       additionalProperties:false and `locale` is documented as a hint — so the
-       task text is the only place this can be asked for at all. */
-    `Speak American English in a neutral US accent, at an ordinary conversational pace. This is a local US business and the caller is American.`,
+    /* Accent is NOT promptable — two live calls confirmed it. The docs say
+       voice region is fixed by a published Goal, so it is a dashboard setting,
+       not a task instruction. This line stays only for vocabulary and pace,
+       which the wording does plausibly influence. */
+    `Use American English vocabulary and an ordinary conversational pace. You are calling a local US business.`,
     ``,
     `Follow these rules exactly:`,
-    `1. Open by saying: "${OPENER}"`,
-    `2. Before you have asked your question: if they say it is a bad moment or ask you to call back, thank them, say you will try another time, and end the call. Do not push.`,
-    `3. Ask exactly this one question and nothing else: "${question}"`,
-    `4. If their answer is ambiguous, you may ask at most one short clarifying follow-up. Do not ask anything unrelated.`,
-    `5. Never guess, infer, or fill in an answer they did not give. "I don't know" and "we're not sure" are valid outcomes — record them as unclear.`,
+    /* The agent was starting to speak the instant the line connected, talking
+       straight over "Amboy Inclusive Playground, how can I help you?". Almost
+       every business answers by announcing itself, so the greeting is the
+       normal case, not an edge case. */
+    `1. When they pick up, they will almost certainly announce the business first — something like "Good morning, ${place.name}, how can I help you?". Let them finish that greeting before you say a single word. Do not start speaking the moment the line connects.`,
+    `2. Then open by saying: "${OPENER}"`,
+    `3. Before you have asked your question: if they say it is a bad moment or ask you to call back, thank them, say you will try another time, and end the call. Do not push.`,
+    `4. Ask exactly this one question and nothing else: "${question}"`,
+    `5. If their answer is ambiguous, you may ask at most one short clarifying follow-up. Do not ask anything unrelated.`,
+    `6. Never guess, infer, or fill in an answer they did not give. "I don't know" and "we're not sure" are valid outcomes — record them as unclear.`,
     /* Two opposite failure modes, seen one after the other on the first two
        live calls, so they need two separate rules. First the agent waited past
        a complete answer, read the silence as absence, and exited down rule 2's
@@ -395,13 +405,21 @@ function buildTask({ place, question, phone }){
        mid-sentence. "End as soon as you have the answer" collapses the two:
        it is silent on how you know the answer is finished. So rule 6 governs
        when they are still talking and rule 7 governs when they have stopped. */
-    `6. Let them finish. Never speak while they are speaking, and never end the call while they are mid-sentence. If they pause and then keep going, let them keep going. If they add detail you did not ask for, hear them out — being cut off mid-thought is rude and it is how a person decides an automated caller is not worth talking to.`,
-    `7. Once they have clearly finished answering — including if they say they do not know — say a brief thank you and goodbye, and end the call. Do not wait for more. Do not ask "are you there", "hello", or "is anyone there". Do not repeat or re-ask the question. Do not fill the silence with small talk. Silence after a complete answer means they have finished speaking, not that they have gone away.`,
-    `8. Never say you will "try again later" or call back once they have answered. That ending is only for rule 2, before the question is asked.`,
-    `9. Do not negotiate, book, order, hold, cancel, or promise anything, and do not give out or collect personal or payment details.`,
-    `10. If they ask who the customer is, say truthfully that you do not have their details — the question came in through the listing on ${CALLER_ID}. Never invent a name, a booking, or a reason on their behalf.`,
-    `11. If you reach voicemail, an automated menu, or a disconnected line, end the call without leaving a message.`,
-    `12. Aim to keep the whole call under two minutes, but never cut someone off to meet that — rule 6 wins.`
+    `7. Let them finish. Never speak while they are speaking, and never end the call while they are mid-sentence. If they pause and then keep going, let them keep going. If they add detail you did not ask for, hear them out — being cut off mid-thought is rude and it is how a person decides an automated caller is not worth talking to.`,
+    /* On the last call the agent answered "does that answer your question?" by
+       reciting its own extracted result back at the person who had just said
+       it — in the third person, "they said there's only a drinking fountain".
+       That is the extraction step leaking into the conversation. The structured
+       result is built after the call from the transcript; it never needs to be
+       spoken, and speaking it makes the agent sound like it is talking about
+       the person rather than to them. */
+    `8. Never repeat, summarise, paraphrase, or read back what they just told you. They already know what they said, and you do not need to confirm it for accuracy. Never refer to them in the third person — you are speaking TO them, not about them. If they ask whether that answered your question, just say yes and thank them.`,
+    `9. Once they have clearly finished answering — including if they say they do not know — say a brief thank you and goodbye, and end the call. Do not wait for more. Do not ask "are you there", "hello", or "is anyone there". Do not repeat or re-ask the question. Do not fill the silence with small talk. Silence after a complete answer means they have finished speaking, not that they have gone away.`,
+    `10. Never say you will "try again later" or call back once they have answered. That ending is only for rule 3, before the question is asked.`,
+    `11. Do not negotiate, book, order, hold, cancel, or promise anything, and do not give out or collect personal or payment details.`,
+    `12. If they ask who the customer is, say truthfully that you do not have their details — the question came in through the listing on ${CALLER_ID}. Never invent a name, a booking, or a reason on their behalf.`,
+    `13. If you reach voicemail, an automated menu, or a disconnected line, end the call without leaving a message.`,
+    `14. Aim to keep the whole call under two minutes, but never cut someone off to meet that — rule 7 wins.`
   ].join('\n');
 }
 
