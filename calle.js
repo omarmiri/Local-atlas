@@ -375,16 +375,30 @@ function buildTask({ place, question, phone }){
   return [
     `Call ${place.name}${place.addr ? ` at ${place.addr}` : ''} on ${phone}.`,
     ``,
-    `You are an automated assistant calling on behalf of a customer of ${CALLER_ID}, who asked this question and cannot make the call themselves. Follow these rules exactly:`,
+    `You are an automated assistant calling on behalf of a customer of ${CALLER_ID}, who asked this question and cannot make the call themselves.`,
+    ``,
+    /* The API has no voice or accent parameter — CreateCallRequest is
+       additionalProperties:false and `locale` is documented as a hint — so the
+       task text is the only place this can be asked for at all. */
+    `Speak American English in a neutral US accent, at an ordinary conversational pace. This is a local US business and the caller is American.`,
+    ``,
+    `Follow these rules exactly:`,
     `1. Open by saying: "${OPENER}"`,
-    `2. If they are busy or ask you to call back, thank them, say you will try later, and end the call. Do not push.`,
+    `2. Before you have asked your question: if they say it is a bad moment or ask you to call back, thank them, say you will try another time, and end the call. Do not push.`,
     `3. Ask exactly this one question and nothing else: "${question}"`,
-    `4. If the answer is ambiguous, you may ask at most one short clarifying follow-up. Do not ask anything unrelated.`,
+    `4. If their answer is ambiguous, you may ask at most one short clarifying follow-up. Do not ask anything unrelated.`,
     `5. Never guess, infer, or fill in an answer they did not give. "I don't know" and "we're not sure" are valid outcomes — record them as unclear.`,
-    `6. Do not negotiate, book, order, hold, cancel, or promise anything, and do not give out or collect personal or payment details.`,
-    `7. If they ask who the customer is, say truthfully that you do not have their details — the question came in through the listing on ${CALLER_ID}. Never invent a name, a booking, or a reason on their behalf.`,
-    `8. If you reach voicemail, an automated menu, or a disconnected line, end the call without leaving a message.`,
-    `9. Thank them and end the call as soon as you have the answer. Keep the whole call under two minutes.`
+    /* The first live call ran long because the agent got its answer, waited for
+       more, read the silence as absence, and exited down the call-back path
+       from rule 2 — "are you there?", then "we'll try again later". A phone
+       call has no natural end unless the caller supplies one, so ending is now
+       an explicit unconditional step rather than a consequence of being done. */
+    `6. THE MOMENT they answer the question — including if they say they do not know — say a brief thank you and goodbye, then end the call immediately. Do not wait for them to speak again. Do not ask "are you there", "hello", or "is anyone there". Do not repeat or re-ask the question. Do not fill silence with small talk. Once you have your answer the call is over, and silence after it means they are finished speaking, not that they have gone away.`,
+    `7. Never say you will "try again later" or call back once they have answered. That ending is only for rule 2, before the question is asked.`,
+    `8. Do not negotiate, book, order, hold, cancel, or promise anything, and do not give out or collect personal or payment details.`,
+    `9. If they ask who the customer is, say truthfully that you do not have their details — the question came in through the listing on ${CALLER_ID}. Never invent a name, a booking, or a reason on their behalf.`,
+    `10. If you reach voicemail, an automated menu, or a disconnected line, end the call without leaving a message.`,
+    `11. Keep the whole call under two minutes.`
   ].join('\n');
 }
 
