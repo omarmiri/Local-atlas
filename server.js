@@ -1268,11 +1268,11 @@ const calleErrStatus = e =>
 
 app.post('/api/ask-place', express.json({ limit: '8kb' }), async (req, res) => {
   try{
-    const { place, question, templateId, confirmed } = req.body || {};
+    const { place, question, templateId, confirmed, force } = req.body || {};
     if(!place || !place.name || place.lat == null || place.lon == null)
       return res.status(400).json({ error: 'place {name, lat, lon, phone} required' });
     const r = await calle.askPlace({ place, question, templateId,
-      confirmed: confirmed === true,
+      confirmed: confirmed === true, force: force === true,
       accessCode: req.get('x-atlas-access') || '' });
     res.status(r.status || 200).json(r);
   }catch(e){ res.status(calleErrStatus(e)).json(calleErrBody(e)); }

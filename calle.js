@@ -261,18 +261,41 @@ async function suggestQuestions(place, category){
   const base = templatesFor(category).slice(0, 6);
   if(!AI_KEY || !place || !place.name) return base;
 
+  /* Everything we know about the place goes in. The failure this fixes is
+     register, not correctness: asking a fast-food counter whether it takes
+     walk-ins on a Saturday evening is a fine question about the wrong kind of
+     restaurant, and it makes the whole feature look like a form letter.
+     Cuisine and price band are what separate "Dave's Hot Chicken" from a place
+     that has a reservation book. */
+  const facts = [
+    `Name: ${place.name}`,
+    place.kind    ? `Type: ${place.kind}` : '',
+    place.cuisine ? `Cuisine: ${place.cuisine}` : '',
+    place.price   ? `Price band: ${'$'.repeat(Math.max(1, Math.min(4, +place.price)))} of $$$$` : '',
+    place.addr    ? `Address: ${place.addr}` : '',
+    place.hours   ? `Listed hours: ${place.hours}` : '',
+    place.website ? `Has a website: yes` : ''
+  ].filter(Boolean).join('\n');
+
   const prompt = [
-    'Suggest questions a visitor might phone a local business to ask.',
+    'Suggest questions a visitor might phone THIS SPECIFIC business to ask.',
     '',
-    `Business: ${place.name}${place.kind ? ` (${place.kind})` : ''}`,
+    facts,
+    '',
+    'Match the question to what this business actually is. A fast-food counter',
+    'does not take reservations and has no wine list; a public park has no staff',
+    'rota and no bookings; a bar is not asked about high chairs. A generic',
+    'question that would fit any business of this category is a failure — if the',
+    'question would read identically for a different place, replace it.',
     '',
     'Each question must:',
-    '- ask for ONE factual, operational detail specific to this kind of business',
+    '- ask for ONE factual, operational detail a visitor would genuinely wonder about here',
     '- be answerable by whoever picks up the phone, in one sentence, without looking anything up',
     '- be a single question ending in "?", under 120 characters',
     '- avoid opinions, reviews, prices that change daily, and anything about a specific customer',
+    '- avoid anything already obvious from the listed hours or address above',
     '',
-    'Return JSON only: an array of 4 question strings.'
+    'Return JSON only: an array of 5 question strings.'
   ].join('\n');
 
   try{
@@ -290,9 +313,9 @@ async function suggestQuestions(place, category){
     const arr = Array.isArray(parsed)
       ? parsed
       : Object.values(parsed || {}).find(Array.isArray) || [];
-    const seen = new Set(base.map(t => qHash(t.text)));
+    const seen = new Set();
     const out = [];
-    for(const item of arr.slice(0, 8)){
+    for(const item of arr.slice(0, 10)){
       const raw = typeof item === 'string' ? item : (item && (item.question || item.text)) || '';
       const v = validateQuestion(raw);
       if(!v.ok) continue;                      // silently drop, never surface a bad chip
@@ -300,9 +323,14 @@ async function suggestQuestions(place, category){
       if(seen.has(h)) continue;
       seen.add(h);
       out.push({ id: '', text: v.question, generated: true });
-      if(out.length >= 4) break;
+      if(out.length >= 5) break;
     }
-    return out.concat(base).slice(0, 8);
+    /* Generated suggestions REPLACE the templates rather than leading them.
+       The templates are category-level by construction, so next to a
+       place-specific question they read as filler, and a filler chip is worse
+       than no chip: it teaches people the feature doesn't know where it's
+       calling. They stay as the fallback for when Gemini gives us nothing. */
+    return out.length ? out : base;
   }catch(e){
     return base;
   }
@@ -604,7 +632,7 @@ async function reserveBudget(){
 
 /* ---- public API ---- */
 
-async function askPlace({ place, question, templateId, accessCode, confirmed }){
+async function askPlace({ place, question, templateId, accessCode, confirmed, force }){
   if(!configured()) return { error: 'CALL-E is not configured on this server.', status: 503 };
 
   /* Simulate unless the caller proved they may spend a credit. Note which way
@@ -659,9 +687,14 @@ async function askPlace({ place, question, templateId, accessCode, confirmed }){
 
   const pk = placeKey(place), qh = qHash(v.question);
 
+  /* Reuse is the whole point of the feature — the second visitor gets the
+     answer for free — so a stored answer wins by default. But `force` exists
+     because an answer can be wrong or out of date long before its TTL says so:
+     hours shift, policies change seasonally, and the person reading the page
+     may know better than the record. A deliberate recheck is theirs to make. */
   // already answered recently — reuse rather than re-dial
   const faq = (await docGet(faqKey(pk))) || [];
-  const known = faq.find(e => e.qHash === qh && e.expiresAt > Date.now());
+  const known = force ? null : faq.find(e => e.qHash === qh && e.expiresAt > Date.now());
   if(known) return { status: 200, reused: true, entry: publicEntry(known) };
 
   const lock = await docGet(lockKey(pk, qh));
@@ -708,6 +741,13 @@ async function askPlace({ place, question, templateId, accessCode, confirmed }){
 
   const c = await client();
 
+  /* CALL-E replays a call for a repeated Idempotency-Key, so a forced recheck
+     reusing the original key would hand back the very answer being rechecked.
+     The hour bucket makes a recheck a new request once an hour, while a
+     double-click inside that hour still dedupes instead of dialling twice. */
+  const idemKey = `local-atlas:${pk}:${qh}` +
+    (force ? `:r${Math.floor(Date.now() / 3600e3)}` : '');
+
   /* A Goal pins its own task text and schemas, so all we may send is a phone
      number and flat scalar variables. Note what does NOT move: the question is
      still sanitised, validated and model-moderated above before it gets here,
@@ -723,7 +763,7 @@ async function askPlace({ place, question, templateId, accessCode, confirmed }){
         business_address: place.addr || '',
         caller_identity: CALLER_ID
       },
-      idempotencyKey: `local-atlas:${pk}:${qh}`
+      idempotencyKey: idemKey
     });
     pending.callId = run.id;
     pending.goalRunId = run.id;
@@ -742,7 +782,7 @@ async function askPlace({ place, question, templateId, accessCode, confirmed }){
     // initiate can be told apart from one we did
     metadata: { app: 'local-atlas', place_key: pk, q_hash: qh, question: v.question },
     ...(webhookUrl() ? { webhookUrl: webhookUrl() } : {})
-  }, { idempotencyKey: `local-atlas:${pk}:${qh}` });
+  }, { idempotencyKey: idemKey });
 
   pending.callId = call.id;
   pending.state = call.status;
