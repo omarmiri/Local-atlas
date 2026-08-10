@@ -388,17 +388,20 @@ function buildTask({ place, question, phone }){
     `3. Ask exactly this one question and nothing else: "${question}"`,
     `4. If their answer is ambiguous, you may ask at most one short clarifying follow-up. Do not ask anything unrelated.`,
     `5. Never guess, infer, or fill in an answer they did not give. "I don't know" and "we're not sure" are valid outcomes — record them as unclear.`,
-    /* The first live call ran long because the agent got its answer, waited for
-       more, read the silence as absence, and exited down the call-back path
-       from rule 2 — "are you there?", then "we'll try again later". A phone
-       call has no natural end unless the caller supplies one, so ending is now
-       an explicit unconditional step rather than a consequence of being done. */
-    `6. THE MOMENT they answer the question — including if they say they do not know — say a brief thank you and goodbye, then end the call immediately. Do not wait for them to speak again. Do not ask "are you there", "hello", or "is anyone there". Do not repeat or re-ask the question. Do not fill silence with small talk. Once you have your answer the call is over, and silence after it means they are finished speaking, not that they have gone away.`,
-    `7. Never say you will "try again later" or call back once they have answered. That ending is only for rule 2, before the question is asked.`,
-    `8. Do not negotiate, book, order, hold, cancel, or promise anything, and do not give out or collect personal or payment details.`,
-    `9. If they ask who the customer is, say truthfully that you do not have their details — the question came in through the listing on ${CALLER_ID}. Never invent a name, a booking, or a reason on their behalf.`,
-    `10. If you reach voicemail, an automated menu, or a disconnected line, end the call without leaving a message.`,
-    `11. Keep the whole call under two minutes.`
+    /* Two opposite failure modes, seen one after the other on the first two
+       live calls, so they need two separate rules. First the agent waited past
+       a complete answer, read the silence as absence, and exited down rule 2's
+       call-back path. Then, told to end promptly, it began cutting people off
+       mid-sentence. "End as soon as you have the answer" collapses the two:
+       it is silent on how you know the answer is finished. So rule 6 governs
+       when they are still talking and rule 7 governs when they have stopped. */
+    `6. Let them finish. Never speak while they are speaking, and never end the call while they are mid-sentence. If they pause and then keep going, let them keep going. If they add detail you did not ask for, hear them out — being cut off mid-thought is rude and it is how a person decides an automated caller is not worth talking to.`,
+    `7. Once they have clearly finished answering — including if they say they do not know — say a brief thank you and goodbye, and end the call. Do not wait for more. Do not ask "are you there", "hello", or "is anyone there". Do not repeat or re-ask the question. Do not fill the silence with small talk. Silence after a complete answer means they have finished speaking, not that they have gone away.`,
+    `8. Never say you will "try again later" or call back once they have answered. That ending is only for rule 2, before the question is asked.`,
+    `9. Do not negotiate, book, order, hold, cancel, or promise anything, and do not give out or collect personal or payment details.`,
+    `10. If they ask who the customer is, say truthfully that you do not have their details — the question came in through the listing on ${CALLER_ID}. Never invent a name, a booking, or a reason on their behalf.`,
+    `11. If you reach voicemail, an automated menu, or a disconnected line, end the call without leaving a message.`,
+    `12. Aim to keep the whole call under two minutes, but never cut someone off to meet that — rule 6 wins.`
   ].join('\n');
 }
 
