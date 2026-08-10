@@ -1280,6 +1280,16 @@ app.post('/api/ask-suggestions', express.json({ limit: '4kb' }), async (req, res
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
+/* Account information, so it sits behind the same code that unlocks dialling. */
+app.get('/api/calle/goals', async (req, res) => {
+  try{
+    if(!calle.realCallOk(req.get('x-atlas-access') || ''))
+      return res.status(401).json({ error: 'access code required' });
+    const r = await calle.listGoals();
+    res.status(r.status || 200).json(r);
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
 app.get('/api/ask-place/:id', async (req, res) => {
   try{
     const id = String(req.params.id || '');

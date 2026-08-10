@@ -43,6 +43,21 @@ const FAQ_TTL_DAYS = parseInt(calleEnv('FAQ_TTL_DAYS') || '90', 10);
 const CALLER_ID = calleEnv('CALLER_IDENTITY') || 'Local Atlas, a local guide website';
 const ACCESS_CODE = calleEnv('ACCESS_CODE');
 const REAL_CODE = env('REAL_CALL_ACCESS_CODE', 'REAL-CALL-ACCESS-CODE');
+/* ---- Goals path (optional, experimental) ----
+   Set CALLE_GOAL_ID to route live calls through a published Goal instead of
+   the one-off Calls API. The only reason to want this is the voice: per the
+   spec, "region, callee locale, and runtime profile come from the published
+   Goal", and there is no voice field on CreateCallRequest at all.
+
+   It is a switch rather than a migration because the trade is real. GoalRun is
+   `additionalProperties: false` over {object, id, goal_id, run_id, run_spec,
+   status, result, error, created_at, completed_at} — no transcript, no
+   summary, no attempts, and `run_id` is documented as correlation-only. So a
+   Goal buys a fixed accent and costs the call log, and it moves the call
+   script out of this file and into the dashboard, where it is neither
+   reviewed nor version-controlled. Worth measuring before adopting. */
+const GOAL_ID = calleEnv('GOAL_ID');
+
 const SIM_FORCE = calleEnv('SIM_OUTCOME');                    // pin a sim outcome for demos
 const SIM_MS = parseInt(calleEnv('SIM_DURATION_MS') || '18000', 10);
 
@@ -666,6 +681,32 @@ async function askPlace({ place, question, templateId, accessCode, confirmed }){
   }
 
   const c = await client();
+
+  /* A Goal pins its own task text and schemas, so all we may send is a phone
+     number and flat scalar variables. Note what does NOT move: the question is
+     still sanitised, validated and model-moderated above before it gets here,
+     so the injection defence stays in this repo even though the script does
+     not. Idempotency-Key is required on this path, not optional. */
+  if(GOAL_ID){
+    const run = await c.goals.run({
+      goalId: GOAL_ID,
+      phone,
+      variables: {
+        question: v.question,
+        business_name: place.name,
+        business_address: place.addr || '',
+        caller_identity: CALLER_ID
+      },
+      idempotencyKey: `local-atlas:${pk}:${qh}`
+    });
+    pending.callId = run.id;
+    pending.goalRunId = run.id;
+    pending.state = run.status;
+    await docSet(callKey(run.id), pending, DAY);
+    await docSet(lockKey(pk, qh), { callId: run.id }, 10 * 60e3);
+    return { status: 202, callId: run.id, state: run.status, viaGoal: true };
+  }
+
   const task = buildTask({ place, question: v.question, phone });
   const call = await c.calls.create({
     task,
@@ -716,10 +757,59 @@ async function pollCall(callId){
   }
 
   const c = await client();
+
+  /* Goal Runs are a different resource with a different terminal signal: the
+     spec says to branch on result/error being non-null rather than on status,
+     and "when both are null, continue polling". They also never webhook — a
+     Run takes only {phone, variables} — so polling is the whole story here. */
+  if(pending.goalRunId){
+    const run = await c.goals.getRun(GOAL_ID, pending.goalRunId);
+    if(run.result === null && run.error === null)
+      return { status: 200, state: run.status || 'in_progress', callId };
+    return { status: 200, state: 'done', entry: await ingestGoalRun(pending, run) };
+  }
+
   const call = await c.calls.get(callId);
   if(call.status === 'queued' || call.status === 'in_progress')
     return { status: 200, state: call.status, callId };
   return { status: 200, state: 'done', entry: await ingest(call) };
+}
+
+/* A Run reports failure as a typed code instead of a transcript we can read,
+   so the mapping to answer_status is a judgement rather than an extraction.
+   Anything that isn't clearly "nobody picked up" or "they declined" becomes
+   unknown, which expires in a day and is retryable — the same treatment the
+   Calls path gives an inconclusive call. */
+const GOAL_ERR_STATUS = {
+  no_answer: 'unreachable',
+  call_failed: 'unreachable',
+  declined: 'refused',
+  timed_out: 'unknown',
+  canceled: 'unknown',
+  result_invalid: 'unknown',
+  result_unavailable: 'unknown',
+  result_failed: 'unknown'
+};
+
+async function ingestGoalRun(pending, run){
+  const r = run.result || {};
+  const err = run.error || null;
+  return publish(pending, {
+    answer_status: err ? (GOAL_ERR_STATUS[err.code] || 'unknown')
+                       : (r.answer_status || 'unknown'),
+    answer: String(r.answer || ''),
+    evidence_quote: String(r.evidence_quote || ''),
+    staff_confidence: r.staff_confidence || 'unknown'
+  }, {
+    summary: err ? err.message : String(r.summary || ''),
+    taskCompleted: !err,
+    // no transcript on this resource — the panel simply omits the call log
+    transcript: [],
+    failureCode: err ? err.code : null,
+    failureMessage: err ? err.message : null,
+    viaGoal: true,
+    status: run.status
+  });
 }
 
 /* Turn a terminal CALL-E record into a published FAQ entry (or a recorded
@@ -761,6 +851,7 @@ async function publish(pending, result, meta){
     // carried into the FAQ entry so the panel can say so out loud; a simulated
     // answer presented as a real one is the one thing this feature must not do
     simulated: !!meta.simulated,
+    viaGoal: !!meta.viaGoal,
     callId: pending.callId,
     collectedAt: now,
     // only a real answer earns a long life; everything else is retryable soon
@@ -800,6 +891,22 @@ async function handleWebhook({ token, body }){
   return { status: 200 };
 }
 
+/* Read-only. Lets us confirm a Goal's id and inspect the input/result schemas
+   it publishes before pointing CALLE_GOAL_ID at it — the variables we send
+   have to match its pinned input_schema exactly or the Run is rejected before
+   it dials. Gated on the real-call code because it is account information. */
+async function listGoals(){
+  if(!CALLE_KEY) return { error: 'CALLE_API_KEY not set', status: 503 };
+  const c = await client();
+  const list = await c.goals.list({ limit: 20 });
+  return { status: 200, items: (list.data || []).map(g => ({
+    id: g.id, title: g.title, description: g.description, status: g.status,
+    runSpecVersion: g.publishedRunSpec?.version,
+    inputSchema: g.publishedRunSpec?.inputSchema,
+    resultSchema: g.publishedRunSpec?.resultSchema
+  })) };
+}
+
 async function getFaq(place){
   const faq = (await docGet(faqKey(placeKey(place)))) || [];
   return faq.filter(e => e.expiresAt > Date.now() || e.answerStatus === 'answered');
@@ -808,7 +915,7 @@ async function getFaq(place){
 module.exports = {
   configured, askPlace, pollCall, handleWebhook, getFaq,
   placeKey, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
-  realCallOk, templatesFor, moderateQuestion, suggestQuestions,
+  realCallOk, templatesFor, moderateQuestion, suggestQuestions, listGoals,
   simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA, OPENER,
   info: () => ({
     configured: configured(), dryRun: DRY_RUN, webhook: !!webhookUrl(),
@@ -816,6 +923,7 @@ module.exports = {
        key to dial with and a code to unlock. The UI offers the unlock only
        when this is true, so it can't advertise a door with nothing behind it. */
     realCalls: !!CALLE_KEY && !!(REAL_CODE || ACCESS_CODE), moderation: !!AI_KEY,
+    viaGoal: !!GOAL_ID,
     budget: DAILY_BUDGET, ttlDays: FAQ_TTL_DAYS
   })
 };
