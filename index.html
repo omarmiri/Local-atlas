@@ -513,6 +513,12 @@
   }
   .openbadge.open{background:#E2F2E7;color:var(--sign-green)}
   .openbadge.closed{background:#FBE9E5;color:var(--alert)}
+  .openbadge.demo{background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--line)}
+  .demo-note{
+    font-family:'IBM Plex Mono',monospace;font-size:.62rem;line-height:1.55;
+    color:var(--ink-soft);border-left:3px solid var(--line);
+    padding:5px 9px;margin:6px 0 2px;background:var(--surface-2);border-radius:0 7px 7px 0;
+  }
   .searchrow input{
     flex:1;min-width:0;
     border:2px solid var(--sign-green-deep);
@@ -1835,6 +1841,12 @@ function openBadge(hours, openNow){
   if(v === false) return `<span class="openbadge closed">Closed</span>`;
   return '';
 }
+/* The one fabricated entry in the whole app. It carries a phone line we own so
+   real CALL-E calls have a safe target, which means anyone else browsing this
+   town must be able to tell at a glance that it is not the park's real number. */
+function demoBadge(it){
+  return it && it.demo ? `<span class="openbadge demo">Test listing</span>` : '';
+}
 function ratingPill(it){
   if(it.rating == null) return '';
   const r = it.rating;
@@ -1850,6 +1862,9 @@ function gmapsURL(it){
 }
 function poiDetailHTML(it, idx){
   const rows = [];
+  if(it.demo) rows.push(`<div class="demo-note">Test listing. This entry exists so Local Atlas
+    can place real phone calls to a line we own instead of to a business that never asked for
+    them. The number below is not the park's — please don't call it expecting the park.</div>`);
   if(it.cuisine) rows.push(`<div class="row">Cuisine: ${esc(it.cuisine)}</div>`);
   if(it.hours)   rows.push(`<div class="row">Hours: ${esc(it.hours)}</div>`);
   if(it.phone)   rows.push(`<div class="row">${esc(it.phone)}</div>`);
@@ -1933,7 +1948,7 @@ function drawPOIs(kind){
     html += `
       <details class="poi">
         <summary>
-          <div><div class="nm">${esc(it.name)}${ratingPill(it)}</div><div class="kind">${esc(it.kind)}${openBadge(it.hours, it.openNow)}</div></div>
+          <div><div class="nm">${esc(it.name)}${ratingPill(it)}</div><div class="kind">${esc(it.kind)}${openBadge(it.hours, it.openNow)}${demoBadge(it)}</div></div>
           <div class="dist">${it.dist.toFixed(1)} mi</div>
         </summary>
         <div class="poi-more">${poiDetailHTML(it, idx++)}</div>

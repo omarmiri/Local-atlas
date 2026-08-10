@@ -329,22 +329,42 @@ function mergePlaces(lists){
 }
 
 /* ---- demo place ----
-   A fictitious business that exists so the CALL-E demo dials a line we own
-   instead of bothering a real one. The number lives in DEMO_PLACE_PHONE and is
-   never committed. It only appears for searches near its own coordinates and
-   in its own category, so it cannot turn up in an unrelated city, and it is
-   flagged `demo: true` so the UI can label it as not a real business. */
+   A test listing that exists so real CALL-E calls dial a line we own instead of
+   bothering an actual business. Defaults to an inclusive playground off Amboy
+   Road in Wayne, NJ, answered by a Google Voice number.
+
+   Three deliberate constraints, because this is a fabricated listing on a site
+   real people use:
+
+   1. **The number is never committed.** It comes from DEMO_PLACE_PHONE, and
+      that variable is also the on switch — without it there is no demo place at
+      all, so a fork or a fresh deploy cannot inherit someone's phone number.
+   2. **It only surfaces near its own coordinates, in its own category.** A
+      search of another town cannot turn it up.
+   3. **It is flagged `demo: true`** and the name says so, because a stranger
+      browsing Wayne must not mistake this for the park's real number and call
+      it. Everything else here is honest data; this one entry is not, and it
+      says so where someone would actually read it. */
 const DEMO = process.env.DEMO_PLACE_PHONE ? {
-  name:     process.env.DEMO_PLACE_NAME || 'Atlas Test Kitchen (demo)',
-  lat:      parseFloat(process.env.DEMO_PLACE_LAT || 'NaN'),
-  lon:      parseFloat(process.env.DEMO_PLACE_LON || 'NaN'),
-  category: process.env.DEMO_PLACE_CATEGORY || 'food',
-  kind:     process.env.DEMO_PLACE_KIND || 'demo restaurant',
-  addr:     process.env.DEMO_PLACE_ADDR || '',
+  name:     process.env.DEMO_PLACE_NAME || 'Amboy Road Inclusive Playground (test listing)',
+  lat:      parseFloat(process.env.DEMO_PLACE_LAT || '40.9430'),
+  lon:      parseFloat(process.env.DEMO_PLACE_LON || '-74.2228'),
+  category: process.env.DEMO_PLACE_CATEGORY || 'kids',
+  kind:     process.env.DEMO_PLACE_KIND || 'inclusive playground',
+  addr:     process.env.DEMO_PLACE_ADDR || 'Near 20 Amboy Rd, Wayne, NJ 07470',
   phone:    process.env.DEMO_PLACE_PHONE,
   website:  '', hours: '', openNow: null, rating: null, src: 'demo', demo: true
 } : null;
 const demoUsable = () => DEMO && Number.isFinite(DEMO.lat) && Number.isFinite(DEMO.lon);
+
+/* Returned as its own provider list so it goes through mergePlaces and gets
+   sorted by distance with everything else, rather than being pinned to the top
+   where it would read as a promoted result. */
+function demoList(category, lat, lon, radiusM){
+  if(!demoUsable() || category !== DEMO.category) return [];
+  const dist = haversineMi(lat, lon, DEMO.lat, DEMO.lon);
+  return dist <= radiusM / 1609 ? [{ ...DEMO, dist }] : [];
+}
 
 app.get('/api/places', async (req, res) => {
   try{
@@ -365,6 +385,8 @@ app.get('/api/places', async (req, res) => {
     const settled = await Promise.allSettled(jobs);
     const lists = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
     if(!lists.length) throw new Error(settled.map(s => String(s.reason?.message || s.reason)).join('; '));
+    const demo = demoList(category, +lat, +lon, r);
+    if(demo.length) lists.push(demo);
     res.json({ items: mergePlaces(lists) });
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
