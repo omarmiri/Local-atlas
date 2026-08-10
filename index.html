@@ -815,7 +815,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v5.5</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v5.6</span></div>
       <div>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
@@ -1910,6 +1910,12 @@ function drawPOIs(kind){
   }
   if(state.poiOpenOnly)
     items = items.filter(i=> i.openNow === true || isOpenNow(i.hours) === true);
+  /* The test listing exists to be found and called. Sorted honestly by distance
+     it lands 27th of 49 — a town centroid is typically miles from any one place,
+     so distance buries it among identical pins. Hoisting it isn't promotion:
+     it's labelled a test listing, so it reads as an app artifact sitting above
+     the results rather than as a result that outranked them. */
+  if(items.some(i=>i.demo)) items = [...items.filter(i=>i.demo), ...items.filter(i=>!i.demo)];
   state.currentPOIs = items;
 
   const RADII = [[7000,'4 mi'],[16000,'10 mi'],[40000,'25 mi']];
@@ -1953,12 +1959,13 @@ function drawPOIs(kind){
         </summary>
         <div class="poi-more">${poiDetailHTML(it, idx++)}</div>
       </details>`;
-    L.circleMarker([it.lat, it.lon], {
-      radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9,
-      bubblingMouseEvents:false
-    }).addTo(poiLayer)
+    // the test listing gets its own colour so it is findable among fifty pins
+    L.circleMarker([it.lat, it.lon], it.demo
+      ? { radius:9, color:'#C8402F', weight:3, fillColor:'#fff', fillOpacity:.95, bubblingMouseEvents:false }
+      : { radius:6, color:'#00583D', weight:2, fillColor:'#FFC72C', fillOpacity:.9, bubblingMouseEvents:false }
+    ).addTo(poiLayer)
       .bindPopup(
-        `<strong>${esc(it.name)}</strong>${openBadge(it.hours, it.openNow)}<br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
+        `<strong>${esc(it.name)}</strong>${openBadge(it.hours, it.openNow)}${demoBadge(it)}<br>${esc(it.kind)} · ${it.dist.toFixed(1)} mi` +
         (it.hours ? `<br><small>${esc(it.hours)}</small>` : '') +
         `<br><a href="${gmapsURL(it)}" target="_blank" rel="noopener">Google Maps</a> · ` +
         `<a href="${directionsURL(it)}" target="_blank" rel="noopener">Directions</a>` +
