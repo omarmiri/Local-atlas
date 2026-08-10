@@ -907,6 +907,24 @@ async function listGoals(){
   })) };
 }
 
+/* Booleans and a count — no account data, so this needs no access code and can
+   be checked from anywhere. It answers the one question the dashboard's status
+   label and the authoring agent's claims disagree about: does the configured
+   Goal actually resolve as published? goals.list() returns only active, listed
+   Goals that have a published RunSpec, so membership in it *is* the proof. */
+async function goalStatus(){
+  if(!GOAL_ID) return { configured: false, published: false };
+  if(!CALLE_KEY) return { configured: true, published: false, error: 'no api key' };
+  try{
+    const c = await client();
+    const list = await c.goals.list({ limit: 50 });
+    const ids = (list.data || []).map(g => g.id);
+    return { configured: true, published: ids.includes(GOAL_ID), goalsVisible: ids.length };
+  }catch(e){
+    return { configured: true, published: false, error: e.code || String(e.message || e) };
+  }
+}
+
 async function getFaq(place){
   const faq = (await docGet(faqKey(placeKey(place)))) || [];
   return faq.filter(e => e.expiresAt > Date.now() || e.answerStatus === 'answered');
@@ -915,7 +933,7 @@ async function getFaq(place){
 module.exports = {
   configured, askPlace, pollCall, handleWebhook, getFaq,
   placeKey, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
-  realCallOk, templatesFor, moderateQuestion, suggestQuestions, listGoals,
+  realCallOk, templatesFor, moderateQuestion, suggestQuestions, listGoals, goalStatus,
   simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA, OPENER,
   info: () => ({
     configured: configured(), dryRun: DRY_RUN, webhook: !!webhookUrl(),

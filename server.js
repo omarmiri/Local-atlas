@@ -1294,6 +1294,14 @@ app.post('/api/ask-suggestions', express.json({ limit: '4kb' }), async (req, res
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
+/* Booleans only, so it needs no code — it exists to settle whether the
+   configured Goal is actually published, which the dashboard label and the
+   authoring agent disagree about. */
+app.get('/api/calle/goal-status', async (req, res) => {
+  try{ res.json(await calle.goalStatus()); }
+  catch(e){ res.status(502).json(calleErrBody(e)); }
+});
+
 /* Account information, so it sits behind the same code that unlocks dialling. */
 app.get('/api/calle/goals', async (req, res) => {
   try{
