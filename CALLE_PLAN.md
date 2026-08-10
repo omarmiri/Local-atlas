@@ -110,8 +110,15 @@ hyphenated name cannot be reached by `process.env.CALLE_API_KEY` dot-access.
 |---|---|
 | `CALLE_API_KEY` | set ✅ |
 | `REAL_CALL_ACCESS_CODE` | set ✅ — the code that unlocks real dialling |
-| `CALLE_WEBHOOK_TOKEN` | **not set** — the last missing piece; any long random string |
+| `CALLE_WEBHOOK_TOKEN` | set ✅ — self-generated hex, not issued by CALL-E |
 | `CALLE_DRY_RUN` | not needed — simulation is the default, not a mode |
+
+The webhook token is **not** a CALL-E credential. Deliveries are unsigned, so there is no
+shared secret to verify against; the token is a random path segment we choose, and an
+unguessable URL is the only thing separating that route from an open endpoint. The receiver
+treats the body as untrusted regardless. Note the URL is sent per-call on `calls.create`, so
+the token has to exist *before* a call is created — setting it afterwards does nothing for
+calls already in flight.
 
 **Env var names must be valid shell identifiers.** These were first set as
 `CALL-E-API-KEY` and `REAL-CALL-ACCESS-CODE`, and Render dropped both silently — 148
