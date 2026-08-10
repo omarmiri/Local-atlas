@@ -1252,6 +1252,20 @@ app.get('/api/layer-test', async (req, res) => {
    by webhook, and /api/ask-place/:id is the polling fallback. */
 const calle = require('./calle');
 
+/* CALL-E throws a typed CalleAPIError carrying `code`, `status` and `details`,
+   and those are the fields that say *why*. Collapsing them to e.message loses
+   the actionable part: "goal_not_executable" points at a specific fix, while
+   the sentence it ships with does not. Pass the code through, and preserve the
+   upstream status so a 4xx does not get reported as our 502. */
+function calleErrBody(e){
+  const body = { error: String(e && e.message || e) };
+  if(e && e.code) body.code = e.code;
+  if(e && e.details && Object.keys(e.details).length) body.details = e.details;
+  return body;
+}
+const calleErrStatus = e =>
+  (e && Number.isInteger(e.status) && e.status >= 400 && e.status < 600) ? e.status : 502;
+
 app.post('/api/ask-place', express.json({ limit: '8kb' }), async (req, res) => {
   try{
     const { place, question, templateId, confirmed } = req.body || {};
@@ -1261,7 +1275,7 @@ app.post('/api/ask-place', express.json({ limit: '8kb' }), async (req, res) => {
       confirmed: confirmed === true,
       accessCode: req.get('x-atlas-access') || '' });
     res.status(r.status || 200).json(r);
-  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+  }catch(e){ res.status(calleErrStatus(e)).json(calleErrBody(e)); }
 });
 
 /* Lets the unlock form tell a wrong code from a working one without having to
