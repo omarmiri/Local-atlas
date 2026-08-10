@@ -294,6 +294,11 @@ async function suggestQuestions(place, category){
     '- be a single question ending in "?", under 120 characters',
     '- avoid opinions, reviews, prices that change daily, and anything about a specific customer',
     '- avoid anything already obvious from the listed hours or address above',
+    /* "Do you still host the Thursday blind-tasting masterclass?" invents a
+       class that may never have existed. Harmless in storage, but on a live
+       call it makes the caller sound like it has confused them with somewhere
+       else — ask whether a thing exists, never assume it does. */
+    '- never presume a fact not listed above. Ask whether something exists ("do you have...", "is there...") rather than assuming it does ("do you still host your Thursday..."). Invented specifics make the caller sound like it has the wrong business',
     '',
     'Return JSON only: an array of 5 question strings.'
   ].join('\n');
