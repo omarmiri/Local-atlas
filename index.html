@@ -418,6 +418,19 @@
     border-radius:99px;padding:9px;cursor:pointer;
   }
   .acct-form button:disabled{opacity:.55;cursor:default}
+  .acct-google{
+    display:flex;align-items:center;justify-content:center;gap:9px;width:100%;
+    margin-top:12px;border:1.5px solid var(--line);border-radius:99px;
+    background:var(--surface);color:var(--ink);cursor:pointer;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.82rem;padding:10px;
+    transition:border-color .13s,background .13s;
+  }
+  .acct-google:hover{border-color:var(--sign-green);background:var(--surface-2)}
+  .acct-or{
+    display:flex;align-items:center;gap:9px;margin:13px 0 2px;
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft);
+  }
+  .acct-or::before,.acct-or::after{content:'';flex:1;height:1px;background:var(--line)}
   .acct-alt{
     background:none;border:none;color:var(--ink-soft);cursor:pointer;
     font-family:'IBM Plex Mono',monospace;font-size:.62rem;text-decoration:underline;padding:4px;
@@ -1012,7 +1025,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.9</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.0</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -1203,21 +1216,34 @@ const saveSession = s => {
   catch(e){}
 };
 
-/* A magic-link click returns here with the session in the URL fragment. This
-   runs at parse time, not inside initAuth, for two reasons: the app's own
-   parseHash() reads location.hash to restore a place and must not be handed
-   Supabase's tokens, and leaving a refresh token sitting in the address bar
-   invites it into history, bookmarks and anything the user pastes. */
+/* Both ways in land here: a magic-link click and a Google redirect both come
+   back with the result in the URL fragment. This runs at parse time, not
+   inside initAuth, for two reasons: the app's own parseHash() reads
+   location.hash to restore a place and must not be handed Supabase's tokens,
+   and leaving a refresh token sitting in the address bar invites it into
+   history, bookmarks and anything the user pastes.
+
+   Failures arrive the same way — an expired link comes back as
+   #error=access_denied&error_code=otp_expired — and are worth as much as the
+   successes. Landing on a page that silently looks signed-out is how "the link
+   didn't work" becomes a guess instead of a message. */
+let authHashError = '';
 (function consumeAuthHash(){
-  if(!/(^|#|&)access_token=/.test(String(location.hash || ''))) return;
-  const h = new URLSearchParams(location.hash.replace(/^#/, ''));
-  try{
-    localStorage.setItem(SESS_KEY, JSON.stringify({
-      access_token: h.get('access_token'), refresh_token: h.get('refresh_token'),
-      expires_at: Date.now() + Math.max(0, (+h.get('expires_in') || 3600) - 60) * 1000,
-      user: null
-    }));
-  }catch(e){}
+  const raw = String(location.hash || '');
+  if(!/(^|#|&)(access_token|error|error_code)=/.test(raw)) return;
+  const h = new URLSearchParams(raw.replace(/^#/, ''));
+  if(h.get('access_token')){
+    try{
+      localStorage.setItem(SESS_KEY, JSON.stringify({
+        access_token: h.get('access_token'), refresh_token: h.get('refresh_token'),
+        expires_at: Date.now() + Math.max(0, (+h.get('expires_in') || 3600) - 60) * 1000,
+        user: null
+      }));
+    }catch(e){}
+  }else{
+    authHashError = (h.get('error_description') || h.get('error') || 'Sign-in failed.')
+      .replace(/\+/g, ' ');
+  }
   history.replaceState(null, '', location.pathname + location.search);
 })();
 
@@ -1256,6 +1282,33 @@ const sendOtp = email => supaPost(
      silently requesting the wrong one. */
   '/auth/v1/otp?redirect_to=' + encodeURIComponent(location.origin + location.pathname),
   { email, create_user: true });
+
+/* ---- Google ----
+   A full page navigation, not a popup: popups get blocked, and the session
+   comes back in the fragment either way, which consumeAuthHash already reads.
+   So this is the whole client side of OAuth — the redirect out, and the
+   handler that was already there for magic links catching the return. */
+function signInWithGoogle(){
+  const a = state.auth;
+  if(!a) return;
+  location.assign(a.url + '/auth/v1/authorize?provider=google&redirect_to=' +
+    encodeURIComponent(location.origin + location.pathname));
+}
+
+/* Which providers this project actually has enabled. Asked rather than assumed
+   for the same reason the panel only offers the real-call unlock when a code is
+   configured: a "Continue with Google" button on a project without Google is a
+   door with nothing behind it, and the failure lands on a Supabase error page
+   well away from anything that could explain itself. */
+async function loadProviders(){
+  const a = state.auth;
+  if(!a) return {};
+  try{
+    const r = await fetch(a.url + '/auth/v1/settings', { headers: { apikey: a.anonKey } });
+    if(!r.ok) return {};
+    return (await r.json()).external || {};
+  }catch(e){ return {}; }
+}
 
 async function verifyOtp(email, token){
   const s = asSession(await supaPost('/auth/v1/verify', { email, token, type: 'email' }));
@@ -1338,9 +1391,20 @@ async function initAuth(){
   if(!info) return;                       // no accounts on this deploy; stay anonymous
   state.auth = { url: info.url, anonKey: info.anonKey };
   $('acctBtn').hidden = false;
+  state.authProviders = await loadProviders();
   await loadMe();
   renderAcctBtn();
   applyTabPrefs();
+  refreshOpenAskPanels();
+
+  /* A failed link put its reason in the fragment and we are the only thing
+     left that can show it. Opening the sheet is the right amount of noise:
+     the user clicked something expecting to be signed in. */
+  if(authHashError && !state.user){
+    const m = authHashError;
+    authHashError = '';
+    openAcct(m, true);
+  }
 }
 
 function renderAcctBtn(){
@@ -1405,9 +1469,12 @@ async function savePrefs(hiddenTabs){
 /* ---------------- account sheet ---------------- */
 const acctState = { step: 'email', email: '', msg: '', bad: false, busy: false };
 
-function openAcct(){
+/* `msg` is a parameter rather than something the caller sets beforehand,
+   because opening the sheet resets its state — a message assigned first would
+   be wiped by the open that was meant to display it. */
+function openAcct(msg, bad){
   acctState.step = state.user ? 'in' : 'email';
-  acctState.msg = ''; acctState.bad = false;
+  acctState.msg = msg || ''; acctState.bad = !!bad;
   $('acctSheet').hidden = false;
   renderAcct();
 }
@@ -1484,11 +1551,27 @@ function renderAcct(){
     return;
   }
 
+  /* Google first when it is available. It is the path that does not depend on
+     an inbox, a rate limit or a redirect landing anywhere in particular, which
+     makes it the one to lead with in front of an audience. */
+  const google = (state.authProviders || {}).google ? `
+    <button class="acct-google" id="acctGoogle">
+      <svg viewBox="0 0 18 18" width="17" height="17" aria-hidden="true">
+        <path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.3-.2-1.9H9v3.5h4.8a4.1 4.1 0 01-1.8 2.7v2.3h2.9c1.7-1.6 2.7-3.9 2.7-6.6z"/>
+        <path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.3c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.1-3.8H.9v2.4A9 9 0 009 18z"/>
+        <path fill="#FBBC05" d="M3.9 10.7a5.4 5.4 0 010-3.4V4.9H.9a9 9 0 000 8.2l3-2.4z"/>
+        <path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 00.9 4.9l3 2.4C4.6 5.1 6.6 3.6 9 3.6z"/>
+      </svg>
+      Continue with Google
+    </button>
+    <div class="acct-or"><span>or use email</span></div>` : '';
+
   el.innerHTML = `
     <h3>Sign in</h3>
     <div class="ask-note">Local Atlas is free to browse without an account. Signing in is
       needed only to request a new verified fact or a private call — both place a real
       phone call, so both need a name attached.</div>
+    ${google}
     <form class="acct-form" id="acctEmailForm">
       <input name="email" type="email" autocomplete="email" placeholder="you@example.com"
              aria-label="Email address" value="${esc(acctState.email)}" required>
@@ -4729,6 +4812,7 @@ $('acctInner').addEventListener('submit', async ev=>{
 });
 
 $('acctInner').addEventListener('click', async ev=>{
+  if(ev.target.closest('#acctGoogle')) return signInWithGoogle();
   if(ev.target.closest('#acctClose2')) return closeAcct();
   if(ev.target.closest('#acctBack')){
     acctState.step = 'email'; acctState.msg = ''; acctState.bad = false;
