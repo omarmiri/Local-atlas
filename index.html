@@ -165,21 +165,22 @@
     font-size:.78rem;line-height:1.5;color:var(--ink);border-left:3px solid var(--sun);
     background:var(--surface);padding:5px 9px;margin:5px 0 0;border-radius:0 7px 7px 0;
   }
-  .faq-meta{
-    display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:5px;
-    font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft);
-  }
-  .faq-stamp{color:var(--sign-green);font-weight:700}
-  .faq-stamp.stale{color:var(--ink-soft)}
   .faq-sim{border:1px solid var(--line);border-radius:99px;padding:1px 6px}
-  .faq-meta .ask-again{
-    border:1px solid var(--sign-green);background:transparent;color:var(--sign-green);
-    font-family:'IBM Plex Mono',monospace;font-size:.6rem;
-    border-radius:99px;padding:1px 7px;cursor:pointer;
+  /* Recheck sits under a fact that is already answered, so it is the quietest
+     thing on the row until the record is actually suspect — a ghost pill that
+     only picks up colour on hover. The loud variant is the exception, not the
+     default: see the .quiet split in factHTML. */
+  .ask-again{
+    flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;
+    border:1.5px solid var(--sign-green);background:transparent;color:var(--sign-green);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.68rem;
+    border-radius:99px;padding:4px 11px;cursor:pointer;line-height:1.2;
+    transition:background .13s,border-color .13s,color .13s;
   }
-  .faq-meta .ask-again:hover{background:var(--sign-green);color:#fff}
-  .faq-meta .ask-again.quiet{border-color:var(--line);color:var(--ink-soft)}
-  .faq-meta .ask-again.quiet:hover{border-color:var(--sign-green);background:transparent;color:var(--sign-green)}
+  .ask-again::before{content:'↻';font-size:.76rem;line-height:1}
+  .ask-again:hover{background:var(--sign-green);color:#fff}
+  .ask-again.quiet{border-color:var(--line);color:var(--ink-soft);background:var(--surface)}
+  .ask-again.quiet:hover{border-color:var(--sign-green);color:var(--sign-green);background:var(--surface-2)}
   .faq-item details{margin-top:5px}
   .faq-item details summary{
     cursor:pointer;color:var(--sign-green);font-weight:700;
@@ -286,7 +287,19 @@
   .ask-sec .tag{font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft)}
   .fact{display:flex;gap:9px;border-top:1px solid var(--line);padding:9px 0}
   .fact:first-of-type{border-top:none}
-  .fact-ico{flex:0 0 20px;font-size:1rem;line-height:1.3;text-align:center;color:var(--sign-green)}
+  /* One sizing rule for every inline icon in this card — they are all the same
+     24-viewBox drawing, so the only thing that varies is the box they sit in. */
+  .fact-ico,.lede-ico,.seg-ico{flex:0 0 auto;color:var(--sign-green);line-height:0}
+  .fact-ico svg{width:19px;height:19px}
+  .lede-ico svg{width:16px;height:16px}
+  .seg-ico svg{width:14px;height:14px}
+  .ask-card-head .fact-ico svg{width:20px;height:20px}
+  .ask-lede .lede-ico{color:var(--ink-soft);margin-top:1px}
+  .priv-note .lede-ico{color:var(--sky);margin-top:1px}
+  .priv-disc .lede-ico{margin-top:1px}
+  .ask-segs button .seg-ico{color:currentColor}
+  .priv-badge .seg-ico,.priv-go svg{color:currentColor}
+  .priv-go svg{width:16px;height:16px}
   .fact-main{flex:1;min-width:0}
   .fact-top{display:flex;align-items:flex-start;gap:8px}
   .fact-title{
@@ -300,14 +313,36 @@
   }
   .fact-age.stale{color:var(--ink-soft)}
   .fact-src{
-    display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;
+    display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;
     font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft);
   }
+  .fact-src > span{min-width:0}          /* let the attribution wrap, not the button */
   .ask-next{
     margin-top:10px;padding:10px 11px;border:1.5px solid var(--line);
     border-radius:9px;background:var(--surface);
   }
   .ask-next h5{font-family:'Overpass',sans-serif;font-weight:800;font-size:.8rem;color:var(--ink)}
+  /* The sign-in wall stands where the form would have been, so it has to read
+     as an invitation rather than as an error — a card with a real button, not
+     a line of small print with a default-styled control bolted to the end. */
+  .signin-cta{
+    display:flex;align-items:center;gap:11px;flex-wrap:wrap;
+    margin:9px 0 1px;padding:11px 12px;border-radius:9px;
+    border:1.5px solid var(--line);background:var(--surface-2);
+  }
+  .signin-cta-txt{flex:1;min-width:160px}
+  .signin-cta b{
+    display:block;font-family:'Overpass',sans-serif;font-weight:700;
+    font-size:.8rem;line-height:1.35;color:var(--ink);
+  }
+  .signin-cta span{display:block;font-size:.74rem;line-height:1.45;color:var(--ink-soft);margin-top:3px}
+  .ask-signin{
+    flex:0 0 auto;border:1.5px solid var(--sign-green);background:var(--sign-green);color:#fff;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.76rem;
+    border-radius:99px;padding:8px 18px;cursor:pointer;line-height:1.2;
+    transition:filter .13s;
+  }
+  .ask-signin:hover{filter:brightness(1.18)}
   /* ---- private actions ---- */
   .priv-badge{
     display:inline-flex;align-items:center;gap:4px;
@@ -977,7 +1012,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.6</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.7</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -2705,18 +2740,44 @@ const ASK_FAIL = {
 /* A stored fact leads with its subject, not with the sentence somebody typed
    to get it. See topicFor in calle.js — older entries have no topic and fall
    back to their question, which is never wrong, only wordier. */
+/* Inline SVG rather than unicode glyphs. The first pass used characters like
+   ⌸ and ♿, which is a lottery: half of them fall back to a tofu box on
+   Windows, and the ones that do resolve arrive as full-colour emoji, which is
+   the one thing that cannot sit in a panel drawn entirely in one green. These
+   stroke in currentColor, so they take the colour of whatever they sit in and
+   stay correct in both themes. */
+const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICON = {
+  check:  svg('<circle cx="12" cy="12" r="9"/><path d="M8.5 12.2l2.4 2.4 4.6-4.9"/>'),
+  clock:  svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.2 1.9"/>'),
+  food:   svg('<path d="M6 3v7a2 2 0 004 0V3M8 10v11"/><path d="M17 3c-1.3 1-2 2.6-2 4.5 0 1.7.7 2.9 2 3.5v10"/>'),
+  access: svg('<circle cx="12" cy="4.6" r="1.9"/><path d="M8.4 8.2l4 1.1v4.1h3.4"/><path d="M15.6 20.2l-1.8-4.1H10a3.9 3.9 0 11-3.1-3.6"/>'),
+  park:   svg('<rect x="4" y="3.5" width="16" height="17" rx="3"/><path d="M10 16.5v-9h2.8a2.6 2.6 0 010 5.2H10"/>'),
+  rest:   svg('<path d="M7.5 21v-6H6l1.6-5.2a1.6 1.6 0 013.1 0L12.3 15h-1.5v6z"/><circle cx="9.1" cy="4.7" r="1.8"/><path d="M17 21v-5.5h1.8L17 9.6h-3.2"/><circle cx="16.4" cy="4.7" r="1.8"/>'),
+  pet:    svg('<ellipse cx="6.6" cy="10.6" rx="1.9" ry="2.4"/><ellipse cx="17.4" cy="10.6" rx="1.9" ry="2.4"/><ellipse cx="10.2" cy="6.2" rx="1.7" ry="2.2"/><ellipse cx="14.6" cy="6.6" rx="1.5" ry="2"/><path d="M12 13.4c2.6 0 4.6 1.8 4.6 3.8S14.8 20.6 12 20.6 7.4 19.2 7.4 17.2 9.4 13.4 12 13.4z"/>'),
+  kids:   svg('<circle cx="12" cy="8" r="4.6"/><path d="M12 12.6v3.6M8.6 20.5l3.4-4.3 3.4 4.3"/>'),
+  card:   svg('<rect x="2.8" y="5.4" width="18.4" height="13.2" rx="2.4"/><path d="M2.8 10h18.4M6.4 14.8h3.4"/>'),
+  book:   svg('<rect x="3.6" y="5" width="16.8" height="15.4" rx="2.4"/><path d="M3.6 9.8h16.8M8.4 3.2v3.6M15.6 3.2v3.6"/>'),
+  phone:  svg('<path d="M7.6 3.8l2.6 3.4-1.9 2.1a12 12 0 004.4 4.4l2.1-1.9 3.4 2.6v3a1.9 1.9 0 01-2.1 1.9C10 18.6 5.4 14 4.7 6.9a1.9 1.9 0 011.9-2.1z"/>'),
+  lock:   svg('<rect x="4.4" y="10.2" width="15.2" height="10.4" rx="2.4"/><path d="M8.2 10.2V7.4a3.8 3.8 0 017.6 0v2.8"/><circle cx="12" cy="15.4" r="1.2"/>'),
+  eye:    svg('<path d="M1.9 12S5.7 5.4 12 5.4 22.1 12 22.1 12 18.3 18.6 12 18.6 1.9 12 1.9 12z"/><circle cx="12" cy="12" r="2.9"/>'),
+  clip:   svg('<rect x="5.4" y="4.4" width="13.2" height="16.2" rx="2.2"/><path d="M9.2 4.4a2.8 2.8 0 015.6 0"/><path d="M9 12.6l2 2 4-4.2"/>')
+};
+
 const FACT_ICONS = [
-  [/hour|open|clos|time/i,              '◷'],
-  [/food|drink|menu|eat|snack|vending/i,'⌸'],
-  [/wheelchair|access|mobility|ramp/i,  '♿'],
-  [/park|lot/i,                         'P'],
-  [/restroom|toilet|bathroom/i,         '⌾'],
-  [/dog|pet/i,                          '⏇'],
-  [/kid|child|play|stroller/i,          '⚑'],
-  [/card|pay|price|cost|fee/i,          '▤'],
-  [/reserv|book|slot|ticket/i,          '▦']
+  [/hour|open|clos|time/i,              'clock'],
+  [/food|drink|menu|eat|snack|vending/i,'food'],
+  [/wheelchair|access|mobility|ramp/i,  'access'],
+  [/park|lot/i,                         'park'],
+  [/restroom|toilet|bathroom/i,         'rest'],
+  [/dog|pet/i,                          'pet'],
+  [/kid|child|play|stroller/i,          'kids'],
+  [/card|pay|price|cost|fee/i,          'card'],
+  [/reserv|book|slot|ticket/i,          'book']
 ];
-const factIcon = e => (FACT_ICONS.find(([re]) => re.test(e.topic || e.question || '')) || [, '✓'])[1];
+const factIcon = e =>
+  ICON[(FACT_ICONS.find(([re]) => re.test(e.topic || e.question || '')) || [, 'check'])[1]];
 
 /* "2 DAYS" reads as a freshness stamp; "Confirmed 2 days ago" reads as a
    sentence you have to finish before you learn anything. Same number. */
@@ -2784,9 +2845,13 @@ function factHTML(e, idx, it){
 /* Anything that can dial costs a credit, so the server refuses it without an
    account. The panel says so where the form would have been rather than
    letting someone compose a question and only then discover the wall. */
-const signInPrompt = what => `<div class="ask-note" style="margin:8px 0">
-    ${esc(what)} places a real phone call, so it needs an account.
-    <button class="ask-signin" style="margin-left:4px">Sign in</button>
+const signInPrompt = what => `<div class="signin-cta">
+    <div class="signin-cta-txt">
+      <b>${esc(what)} places a real phone call.</b>
+      <span>Sign in so it has a name on it. Browsing and reading answers stay free
+        and anonymous.</span>
+    </div>
+    <button class="ask-signin">Sign in</button>
   </div>`;
 
 const HAS_ACCOUNTS = () => !!state.auth;
@@ -2802,22 +2867,22 @@ function renderAsk(it, box, idx){
 
   box.innerHTML = `<div class="ask-panel${it._collapsed ? ' collapsed' : ''}">
       <div class="ask-card-head" role="button" tabindex="0">
-        <span class="fact-ico">✓</span>
+        <span class="fact-ico">${ICON.check}</span>
         <h4>Verified facts &amp; private actions</h4>
         <span class="chev">▲</span>
       </div>
       <div class="ask-card-body">
         <div class="ask-lede">
-          <span aria-hidden="true">✆</span>
+          <span class="lede-ico">${ICON.phone}</span>
           <span>Local Atlas calls the place only when a useful fact is missing or you ask it
             to complete a private task.</span>
         </div>
         <div class="ask-segs" role="tablist">
           <button role="tab" data-seg="facts" aria-selected="${seg === 'facts'}">
-            ✓ Verified Facts <span class="segcount">${faq.length}</span>
+            <span class="seg-ico">${ICON.check}</span> Verified Facts <span class="segcount">${faq.length}</span>
           </button>
           <button role="tab" data-seg="private" aria-selected="${seg === 'private'}">
-            🔒 Private Actions${priv.length ? ` <span class="segcount">${priv.length}</span>` : ''}
+            <span class="seg-ico">${ICON.lock}</span> Private Actions${priv.length ? ` <span class="segcount">${priv.length}</span>` : ''}
           </button>
         </div>
         ${seg === 'facts' ? factsPaneHTML(it, idx, faq, chips) : privatePaneHTML(it, idx, priv)}
@@ -2870,10 +2935,10 @@ function privatePaneHTML(it, idx, priv){
   return `
     <div class="ask-sec">
       <h5>Call ahead for me</h5>
-      <span class="priv-badge">🔒 Private</span>
+      <span class="priv-badge"><span class="seg-ico">${ICON.lock}</span> Private</span>
     </div>
     <div class="priv-note">
-      <span aria-hidden="true">✓</span>
+      <span class="lede-ico">${ICON.check}</span>
       <span>Your request and the call result stay in your account. They are never added
         to the public listing.</span>
     </div>
@@ -2901,11 +2966,11 @@ function privatePaneHTML(it, idx, priv){
             placeholder="Is the sensory play equipment working today, and is the accessible restroom nearby open?">${esc(it._q || '')}</textarea>
         </div>
         <div class="priv-disc">
-          <span aria-hidden="true">👁</span>
+          <span class="lede-ico">${ICON.eye}</span>
           <span>CALL-E will identify itself as an automated assistant and ask only what you
             review on the next screen.</span>
         </div>
-        <button type="submit" class="priv-go">📋 Review private call</button>
+        <button type="submit" class="priv-go">${ICON.clip} Review private call</button>
       </form>`}
     ${SIGNED_IN() && priv.length ? `<div class="priv-result">
         <div class="ask-sec"><h5>Your private results</h5>
@@ -2963,7 +3028,7 @@ function renderConfirm(it, box, idx, ask, preview){
   panel.insertAdjacentHTML('beforeend', `
     <div class="ask-confirm">
       <div class="ask-confirm-h">This will ring a real phone</div>
-      ${ask.isPrivate ? `<div class="priv-badge" style="margin-bottom:6px">🔒 Private — the result is yours alone</div>` : ''}
+      ${ask.isPrivate ? `<div class="priv-badge" style="margin-bottom:6px"><span class="seg-ico">${ICON.lock}</span> Private — the result is yours alone</div>` : ''}
       <div class="ask-note">Calling ${esc(preview.placeName || it.name)} on ${esc(prettyPhone(preview.phone))}. The agent opens with:</div>
       <div class="faq-quote">“${esc(preview.opener)}”</div>
       <div class="ask-note">Then asks exactly this, and nothing else:</div>
