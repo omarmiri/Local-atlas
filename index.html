@@ -1012,7 +1012,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.8</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.9</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -1173,9 +1173,9 @@ state.backendP = (async ()=>{
     const ctl = new AbortController();
     setTimeout(()=>ctl.abort(), 4000);
     const r = await fetch('/api/health', { signal: ctl.signal });
-    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, goog:!!j.goog, places:!!(j.fsq||j.goog), tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy, nasa:!!j.nasa, calle:j.calle || null }; }
+    if(r.ok){ const j = await r.json(); return { ok:true, fsq:!!j.fsq, goog:!!j.goog, places:!!(j.fsq||j.goog), tm:!!j.tm, ai:!!j.ai, owm:!!j.owm, windy:!!j.windy, nasa:!!j.nasa, calle:j.calle || null, auth:j.auth || null }; }
   }catch(e){}
-  return { ok:false, fsq:false, goog:false, places:false, tm:false, ai:false, owm:false, windy:false, nasa:false, calle:null };
+  return { ok:false, fsq:false, goog:false, places:false, tm:false, ai:false, owm:false, windy:false, nasa:false, calle:null, auth:null };
 })();
 state.backendP.then(be=>{ state.calle = be.calle; });
 
@@ -1466,6 +1466,21 @@ function renderAcct(){
       <button class="acct-alt" id="acctBack">Use a different email</button>`;
     const i = el.querySelector('input');
     if(i) i.focus();
+    return;
+  }
+
+  /* Reachable even with no provider configured, because the sheet can be opened
+     from a stale panel or a direct call. Better to say so here than to accept
+     an email address and fail on submit. */
+  if(!state.auth){
+    el.innerHTML = `
+      <h3>Accounts are not set up</h3>
+      <div class="ask-note">This deploy has no identity provider configured, so there is
+        nothing to sign in to. Set <b>SUPABASE_URL</b> and <b>SUPABASE_ANON_KEY</b> and
+        reload. Everything that does not place a phone call works without an account.</div>
+      <div class="tabprefs-acts" style="margin-top:14px">
+        <button id="acctClose2">Close</button>
+      </div>`;
     return;
   }
 
@@ -2853,14 +2868,26 @@ function factHTML(e, idx, it){
 /* Anything that can dial costs a credit, so the server refuses it without an
    account. The panel says so where the form would have been rather than
    letting someone compose a question and only then discover the wall. */
-const signInPrompt = what => `<div class="signin-cta">
-    <div class="signin-cta-txt">
-      <b>${esc(what)} places a real phone call.</b>
-      <span>Sign in so it has a name on it. Browsing and reading answers stay free
-        and anonymous.</span>
-    </div>
-    <button class="ask-signin">Sign in</button>
-  </div>`;
+/* Two different walls. Without an account you can sign in; without accounts
+   configured at all there is nothing to sign in to, and offering the button
+   anyway is how a missing env var turns into "I typed my email and it told me
+   accounts don't exist". Say which wall it is before anyone types anything. */
+const signInPrompt = what => HAS_ACCOUNTS()
+  ? `<div class="signin-cta">
+      <div class="signin-cta-txt">
+        <b>${esc(what)} places a real phone call.</b>
+        <span>Sign in so it has a name on it. Browsing and reading answers stay free
+          and anonymous.</span>
+      </div>
+      <button class="ask-signin">Sign in</button>
+    </div>`
+  : `<div class="signin-cta">
+      <div class="signin-cta-txt">
+        <b>${esc(what)} needs an account, and accounts are not set up on this server.</b>
+        <span>Everything already confirmed above stays readable. Set SUPABASE_URL and
+          SUPABASE_ANON_KEY to enable this.</span>
+      </div>
+    </div>`;
 
 const HAS_ACCOUNTS = () => !!state.auth;
 const SIGNED_IN = () => !!state.user;
