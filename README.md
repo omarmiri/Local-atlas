@@ -48,6 +48,21 @@ returns a boolean per key so you can confirm what's wired.
 | `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` | Persistent L2 cache | Check it with **`/api/cache-test`**, which forces a real round-trip and reports the verdict. The `redis` flag on `/api/health` used to be `!!RURL` — it only proved the env var was non-empty, and since every Redis error is swallowed, a bad token looked exactly like a permanently cold cache. **Strongly recommended.** Free tier: 256 MB, 500k commands/mo, no card. Use the **REST** URL+token (not the redis:// string). Without it, caches reset on every restart/spin-down, re-running Gemini/Foursquare calls unnecessarily. |
 | `GEMINI_MODEL` | Overrides the Gemini model string | Optional. |
 | `SELF_PING_URL` | Overrides the keep-alive target | Optional; defaults to Render's `RENDER_EXTERNAL_URL`. |
+| `SUPABASE_URL` + `SUPABASE_ANON_KEY` | Accounts: sign-in, Private Actions, per-account tab visibility | Both are **public values** — the anon key is designed to ship to the browser and is served to it from `/api/health`. There is deliberately no service-role key in this app. Supabase is the identity provider only: preferences and private call results stay in Upstash. Without these the app runs exactly as before, anonymous, with the sign-in button hidden and anything that would spend a call credit refused with `auth_unconfigured`. |
+| `CALLE_PRIVATE_TTL_DAYS` | How long a private call result is kept | Defaults to 30. Shared verified facts use `CALLE_FAQ_TTL_DAYS` (90) — a private answer about one visit is spent once that visit happens. |
+
+### Supabase setup
+
+1. Create a project, then **Project Settings → API** for the URL and the `anon` key.
+2. **Authentication → Providers → Email**: enable it. Confirmations on or off both work.
+3. **Authentication → Email Templates → Magic Link**: add `{{ .Token }}` to the body to get a
+   **6-digit code**, which is what the sign-in sheet asks for. Leaving the default link-only
+   template also works — clicking the link returns to the app with the session in the URL
+   fragment, which the page consumes and scrubs — but the code is the better demo: a link
+   opens a new tab and loses the map state.
+4. Free-tier projects **pause after a stretch of inactivity**, and a paused project is a broken
+   sign-in. Check the current threshold before relying on it for a demo; `SELF_PING_URL` keeps
+   Render warm but does nothing for Supabase.
 
 ## Deploy on Render (Node Web Service)
 

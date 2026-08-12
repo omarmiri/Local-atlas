@@ -250,6 +250,169 @@
   .ask-confirm-acts .ask-go{border:1.5px solid var(--alert);background:var(--alert);color:#fff}
   .ask-confirm-acts .ask-go:disabled{opacity:.55;cursor:default}
   .ask-confirm-acts .ask-cancel{border:1.5px solid var(--line);background:transparent;color:var(--ink-soft)}
+
+  /* ---- verified facts / private actions ---- */
+  .ask-card-head{
+    display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;
+  }
+  .ask-card-head h4{
+    flex:1;font-family:'Overpass',sans-serif;font-weight:800;font-size:.86rem;
+    letter-spacing:0;text-transform:none;color:var(--ink);
+  }
+  .ask-card-head .chev{color:var(--ink-soft);font-size:.8rem;transition:transform .15s}
+  .ask-panel.collapsed .ask-card-head .chev{transform:rotate(180deg)}
+  .ask-panel.collapsed .ask-card-body{display:none}
+  .ask-lede{
+    display:flex;gap:8px;align-items:flex-start;margin:8px 0 10px;
+    font-size:.78rem;line-height:1.5;color:var(--ink-soft);
+  }
+  .ask-segs{display:flex;gap:0;margin-bottom:10px;border-radius:9px;overflow:hidden;border:1.5px solid var(--line)}
+  .ask-segs button{
+    flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+    border:none;background:var(--surface-2);color:var(--ink-soft);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.76rem;
+    padding:9px 8px;cursor:pointer;
+  }
+  .ask-segs button[aria-selected="true"]{background:var(--surface);color:var(--ink)}
+  .ask-segs button .segcount{
+    font-family:'IBM Plex Mono',monospace;font-size:.66rem;opacity:.8;
+  }
+  .ask-sec{
+    display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:2px 0 8px;
+  }
+  .ask-sec h5{
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:.8rem;color:var(--ink);
+  }
+  .ask-sec .tag{font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft)}
+  .fact{display:flex;gap:9px;border-top:1px solid var(--line);padding:9px 0}
+  .fact:first-of-type{border-top:none}
+  .fact-ico{flex:0 0 20px;font-size:1rem;line-height:1.3;text-align:center;color:var(--sign-green)}
+  .fact-main{flex:1;min-width:0}
+  .fact-top{display:flex;align-items:flex-start;gap:8px}
+  .fact-title{
+    flex:1;font-family:'Overpass',sans-serif;font-weight:700;font-size:.86rem;
+    line-height:1.35;color:var(--ink);
+  }
+  .fact-age{
+    flex:0 0 auto;display:flex;align-items:center;gap:4px;white-space:nowrap;
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;font-weight:700;
+    text-transform:uppercase;color:var(--sign-green);
+  }
+  .fact-age.stale{color:var(--ink-soft)}
+  .fact-src{
+    display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;color:var(--ink-soft);
+  }
+  .ask-next{
+    margin-top:10px;padding:10px 11px;border:1.5px solid var(--line);
+    border-radius:9px;background:var(--surface);
+  }
+  .ask-next h5{font-family:'Overpass',sans-serif;font-weight:800;font-size:.8rem;color:var(--ink)}
+  /* ---- private actions ---- */
+  .priv-badge{
+    display:inline-flex;align-items:center;gap:4px;
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:.06em;color:var(--sky);
+  }
+  .priv-note{
+    display:flex;gap:8px;align-items:flex-start;margin:8px 0 10px;padding:8px 10px;
+    border-left:3px solid var(--sky);background:var(--surface);border-radius:0 7px 7px 0;
+    font-size:.76rem;line-height:1.55;color:var(--ink-soft);
+  }
+  .priv-opt{
+    display:flex;gap:9px;align-items:flex-start;padding:9px 10px;margin-bottom:7px;
+    border:1.5px solid var(--line);border-radius:9px;background:var(--surface);cursor:pointer;
+  }
+  .priv-opt[data-on="1"]{border-color:var(--sky)}
+  .priv-opt input{margin-top:3px;accent-color:var(--sky)}
+  .priv-opt b{display:block;font-family:'Overpass',sans-serif;font-weight:700;font-size:.84rem;color:var(--ink)}
+  .priv-opt span{display:block;font-size:.76rem;line-height:1.45;color:var(--ink-soft);margin-top:2px}
+  .priv-when{display:flex;gap:9px;margin:9px 0}
+  .priv-when label{flex:1;min-width:0}
+  .field-label{
+    display:block;font-family:'IBM Plex Mono',monospace;font-size:.58rem;
+    text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin-bottom:3px;
+  }
+  .priv-when input,.priv-when select,.priv-q textarea{
+    width:100%;border:1.5px solid var(--line);border-radius:9px;padding:7px 9px;
+    font:inherit;font-size:.82rem;background:var(--surface);color:var(--ink);
+  }
+  .priv-q textarea{min-height:62px;resize:vertical;line-height:1.5}
+  .priv-when input:focus,.priv-when select:focus,.priv-q textarea:focus{border-color:var(--sky);outline:none}
+  .priv-disc{
+    display:flex;gap:8px;align-items:flex-start;margin:9px 0;
+    font-family:'IBM Plex Mono',monospace;font-size:.6rem;line-height:1.6;color:var(--ink-soft);
+  }
+  .priv-go{
+    width:100%;display:flex;align-items:center;justify-content:center;gap:7px;
+    border:1.5px solid var(--sign-green-deep);background:var(--sign-green-deep);color:#fff;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.8rem;
+    border-radius:9px;padding:11px;cursor:pointer;
+  }
+  .priv-go:disabled{opacity:.55;cursor:default}
+  .priv-result{border-top:1px solid var(--line);margin-top:11px;padding-top:9px}
+
+  /* ---- account ---- */
+  .acct-btn{
+    border:1.5px solid var(--line);background:var(--surface);color:var(--ink);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.68rem;
+    border-radius:99px;padding:3px 10px;cursor:pointer;margin-right:4px;
+  }
+  .acct-btn:hover{border-color:var(--sign-green);color:var(--sign-green)}
+  .acct-btn.in{border-color:var(--sign-green);color:var(--sign-green)}
+  .acct-sheet{
+    position:fixed;inset:0;z-index:1200;display:flex;align-items:center;justify-content:center;
+    background:rgba(9,30,20,.45);padding:16px;
+  }
+  .acct-sheet[hidden]{display:none}
+  .acct-inner{
+    width:100%;max-width:380px;max-height:88vh;overflow:auto;
+    background:var(--paper);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;
+  }
+  .acct-inner h3{font-family:'Overpass',sans-serif;font-weight:800;font-size:1rem;color:var(--ink)}
+  .acct-inner .ask-note{margin-top:5px}
+  .acct-form{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+  .acct-form input{
+    border:1.5px solid var(--line);border-radius:9px;padding:9px 11px;
+    font:inherit;font-size:.86rem;background:var(--surface);color:var(--ink);
+  }
+  .acct-form input:focus{border-color:var(--sign-green);outline:none}
+  .acct-form button{
+    border:1.5px solid var(--sign-green);background:var(--sign-green);color:#fff;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.78rem;
+    border-radius:99px;padding:9px;cursor:pointer;
+  }
+  .acct-form button:disabled{opacity:.55;cursor:default}
+  .acct-alt{
+    background:none;border:none;color:var(--ink-soft);cursor:pointer;
+    font-family:'IBM Plex Mono',monospace;font-size:.62rem;text-decoration:underline;padding:4px;
+  }
+  .acct-msg{font-size:.76rem;line-height:1.5;margin-top:9px;color:var(--ink-soft)}
+  .acct-msg.bad{color:#9b2226}
+  :root[data-theme="dark"] .acct-msg.bad{color:#F2A0A0}
+  .acct-you{
+    display:flex;justify-content:space-between;align-items:center;gap:8px;
+    padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;background:var(--surface);
+  }
+  .acct-you b{font-size:.82rem;font-weight:600;color:var(--ink);word-break:break-all}
+  .tabprefs{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+  .tabprefs h4{font-family:'Overpass',sans-serif;font-weight:800;font-size:.8rem;color:var(--ink)}
+  .tabprefs-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .tabprefs-grid label{
+    display:flex;align-items:center;gap:5px;cursor:pointer;
+    border:1.5px solid var(--line);border-radius:99px;padding:4px 10px;
+    font-family:'Overpass',sans-serif;font-weight:600;font-size:.74rem;
+    background:var(--surface);color:var(--ink-soft);
+  }
+  .tabprefs-grid label[data-on="1"]{border-color:var(--sign-green);color:var(--sign-green)}
+  .tabprefs-grid input{accent-color:var(--sign-green)}
+  .tabprefs-acts{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+  .tabprefs-acts button{
+    border:1.5px solid var(--line);background:var(--surface);color:var(--ink-soft);
+    font-family:'IBM Plex Mono',monospace;font-size:.62rem;
+    border-radius:99px;padding:4px 10px;cursor:pointer;
+  }
+  .tabprefs-acts button:hover{border-color:var(--sign-green);color:var(--sign-green)}
   .poicontrols{display:flex;gap:8px;margin:0 0 10px}
   .poicontrols input{
     flex:1;min-width:0;border:1.5px solid var(--line);border-radius:9px;
@@ -814,8 +977,9 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.5</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v6.6</span></div>
       <div>
+        <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
         <button class="hide-btn head-arrow" id="headToggle" aria-label="Hide or show the location search" title="Hide search">▴</button>
         <button class="hide-btn" id="hideBtn" aria-label="Hide panel and show the map" title="Hide panel">⟨⟨</button>
@@ -917,6 +1081,13 @@
   <div class="states-content" id="statesContent"></div>
 </aside>
 
+<!-- Sign-in and per-account settings. Rendered by renderAcct(); the markup here
+     is only the shell, because what belongs inside changes completely between
+     signed-out and signed-in. -->
+<div class="acct-sheet" id="acctSheet" hidden role="dialog" aria-modal="true" aria-label="Account">
+  <div class="acct-inner" id="acctInner"></div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 /* =====================================================================
@@ -972,6 +1143,304 @@ state.backendP = (async ()=>{
   return { ok:false, fsq:false, goog:false, places:false, tm:false, ai:false, owm:false, windy:false, nasa:false, calle:null };
 })();
 state.backendP.then(be=>{ state.calle = be.calle; });
+
+/* ---------------- accounts ----------------
+   Supabase's auth REST API is called directly here rather than through
+   @supabase/supabase-js. This app is one HTML file with no bundler and no
+   client dependencies; the whole of what we need from that SDK is three POSTs
+   and a token refresh, and pulling a CDN module in to get them would cost more
+   than it saves — including a hard dependency on a third-party origin being up
+   at demo time.
+
+   The server never trusts any of this. It re-verifies the access token against
+   Supabase on every request that can spend a call credit, so the code below
+   decides what the UI offers, never what the user is allowed to do. */
+const SESS_KEY = 'atlasSession';
+state.auth  = null;                 // { url, anonKey } once health says so
+state.user  = null;
+state.prefs = { hiddenTabs: [] };
+
+const loadSession = () => {
+  try{ return JSON.parse(localStorage.getItem(SESS_KEY) || 'null'); }catch(e){ return null; }
+};
+const saveSession = s => {
+  try{ s ? localStorage.setItem(SESS_KEY, JSON.stringify(s)) : localStorage.removeItem(SESS_KEY); }
+  catch(e){}
+};
+
+/* A magic-link click returns here with the session in the URL fragment. This
+   runs at parse time, not inside initAuth, for two reasons: the app's own
+   parseHash() reads location.hash to restore a place and must not be handed
+   Supabase's tokens, and leaving a refresh token sitting in the address bar
+   invites it into history, bookmarks and anything the user pastes. */
+(function consumeAuthHash(){
+  if(!/(^|#|&)access_token=/.test(String(location.hash || ''))) return;
+  const h = new URLSearchParams(location.hash.replace(/^#/, ''));
+  try{
+    localStorage.setItem(SESS_KEY, JSON.stringify({
+      access_token: h.get('access_token'), refresh_token: h.get('refresh_token'),
+      expires_at: Date.now() + Math.max(0, (+h.get('expires_in') || 3600) - 60) * 1000,
+      user: null
+    }));
+  }catch(e){}
+  history.replaceState(null, '', location.pathname + location.search);
+})();
+
+async function supaPost(path, body){
+  const a = state.auth;
+  if(!a) throw new Error('Accounts are not configured on this server.');
+  const r = await fetch(a.url + path, {
+    method: 'POST',
+    headers: { apikey: a.anonKey, 'content-type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const j = await r.json().catch(()=>({}));
+  // Supabase spells the human-readable part differently per endpoint
+  if(!r.ok) throw new Error(j.msg || j.error_description || j.message || ('Sign-in failed (' + r.status + ')'));
+  return j;
+}
+
+const asSession = j => ({
+  access_token: j.access_token, refresh_token: j.refresh_token,
+  // a little early on purpose — a token that expires mid-request is a failed
+  // call the user has to notice and retry
+  expires_at: Date.now() + Math.max(0, (j.expires_in || 3600) - 60) * 1000,
+  user: j.user || null
+});
+
+/* Email one-time code. Supabase sends whatever the project's "Magic Link"
+   template contains: include {{ .Token }} in it and this is a 6-digit code,
+   leave it as the default link and the user lands back here with tokens in the
+   URL fragment — handled in initAuth. Both paths end in the same session. */
+const sendOtp = email => supaPost('/auth/v1/otp', { email, create_user: true });
+
+async function verifyOtp(email, token){
+  const s = asSession(await supaPost('/auth/v1/verify', { email, token, type: 'email' }));
+  saveSession(s);
+  return s;
+}
+
+/* One in-flight refresh at a time. Two panels asking for a token at once would
+   otherwise race, and the loser would be holding a refresh token that the
+   winner has already spent. */
+let _refreshP = null;
+function refreshSession(s){
+  if(_refreshP) return _refreshP;
+  _refreshP = supaPost('/auth/v1/token?grant_type=refresh_token', { refresh_token: s.refresh_token })
+    .then(j=>{ const n = asSession(j); saveSession(n); return n; })
+    .catch(e=>{ saveSession(null); state.user = null; throw e; })
+    .finally(()=>{ _refreshP = null; });
+  return _refreshP;
+}
+
+/* The access token for an API call, refreshed if it is about to lapse.
+   Returns '' rather than throwing when signed out — callers use it to decide
+   whether to send an Authorization header, and "no header" is a valid state. */
+async function authToken(){
+  let s = loadSession();
+  if(!s || !s.access_token) return '';
+  if(s.expires_at && s.expires_at < Date.now()){
+    try{ s = await refreshSession(s); }catch(e){ return ''; }
+  }
+  return s.access_token || '';
+}
+
+async function authHeaders(extra){
+  const h = { ...(extra || {}) };
+  const t = await authToken();
+  if(t) h.Authorization = 'Bearer ' + t;
+  return h;
+}
+
+async function signOut(){
+  const t = await authToken();
+  const a = state.auth;
+  // best-effort: the local session is gone either way, and a failed revoke
+  // must not leave the UI claiming to still be signed in
+  if(t && a) fetch(a.url + '/auth/v1/logout', { method: 'POST',
+    headers: { apikey: a.anonKey, Authorization: 'Bearer ' + t } }).catch(()=>{});
+  saveSession(null);
+  state.user = null;
+  state.prefs = { hiddenTabs: [] };
+  /* Private results are held on the POI objects for as long as the list lives,
+     which outlasts the session. Signing out has to drop them: leaving them in
+     memory means the next person at this browser sees the last person's calls
+     the moment they reopen a panel. */
+  (state.currentPOIs || []).forEach(p=>{ delete p._priv; });
+  (state.allPOIs   || []).forEach(p=>{ delete p._priv; });
+  applyTabPrefs();
+  renderAcctBtn();
+}
+
+/* Confirms the stored session against our own server and picks up the saved
+   preferences in the same round-trip. Our /api/auth/me is the authority here,
+   not the token in localStorage — a token this page cannot verify is exactly
+   the token that should not be drawing a signed-in header. */
+async function loadMe(){
+  const t = await authToken();
+  if(!t){ state.user = null; return null; }
+  try{
+    const r = await fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + t } });
+    const j = await r.json();
+    state.user = j.user || null;
+    if(j.prefs) state.prefs = { hiddenTabs: j.prefs.hiddenTabs || [] };
+    if(!state.user) saveSession(null);
+  }catch(e){ state.user = null; }
+  return state.user;
+}
+
+async function initAuth(){
+  const be = await state.backendP;
+  const info = be.ok && be.auth && be.auth.configured ? be.auth : null;
+  if(!info) return;                       // no accounts on this deploy; stay anonymous
+  state.auth = { url: info.url, anonKey: info.anonKey };
+  $('acctBtn').hidden = false;
+  await loadMe();
+  renderAcctBtn();
+  applyTabPrefs();
+}
+
+function renderAcctBtn(){
+  const b = $('acctBtn');
+  if(!b) return;
+  b.textContent = state.user ? (state.user.email || 'Account').split('@')[0].slice(0, 12) : 'Sign in';
+  b.classList.toggle('in', !!state.user);
+}
+
+/* ---------------- per-account tab visibility ----------------
+   The only feature flag this app has, and it is deliberately cosmetic: it
+   decides which tabs are drawn, nothing else. Hiding a tab is not a permission
+   — anything that costs a call credit is refused by the server whatever the
+   client chose to render. What it is for is signal: eighteen tabs is the right
+   answer for someone exploring a town and the wrong one for a demo about
+   phoning a playground. */
+const TAB_LABELS = {
+  weather:'Weather', alerts:'Alerts', surf:'Surf', news:'News', events:'Events',
+  services:'Services', attractions:'See & Do', food:'Eat', shopping:'Shop',
+  favorites:'Rec', kids:'Kids', cams:'Cams', radio:'Radio', social:'Social',
+  saved:'Saved', brief:'Brief', laws:'Laws', cost:'Cost'
+};
+const TAB_ORDER = Object.keys(TAB_LABELS);
+/* The hackathon preset. Kids and See & Do are the two lists with places worth
+   phoning, so they are what survives. */
+const TAB_PRESETS = {
+  'calle-demo': TAB_ORDER.filter(t => t !== 'kids' && t !== 'attractions'),
+  'everything': []
+};
+
+const tabHidden = t => (state.prefs.hiddenTabs || []).includes(t);
+
+/* Re-runs the group filter and drops any group whose tabs are all hidden —
+   a group button leading to an empty strip is a dead end. */
+function applyTabPrefs(){
+  // nothing to lay out until a place is loaded; loadPlace calls this again
+  if($('tabs').style.display === 'none') return;
+  document.querySelectorAll('#tabGroups button').forEach(b=>{
+    const any = [...document.querySelectorAll('#tabs .tab[data-group="'+b.dataset.group+'"]')]
+      .some(t => !tabHidden(t.dataset.tab));
+    b.style.display = any ? '' : 'none';
+  });
+  const want = state.tabGroup || TAB_GROUP_DEFAULT;
+  const cur = document.querySelector('#tabGroups button[data-group="'+want+'"]');
+  const usable = cur && cur.style.display !== 'none'
+    ? want
+    : ([...document.querySelectorAll('#tabGroups button')].find(b=>b.style.display !== 'none') || {}).dataset?.group;
+  if(usable) applyTabGroup(usable);
+}
+
+async function savePrefs(hiddenTabs){
+  state.prefs = { hiddenTabs };
+  applyTabPrefs();
+  const h = await authHeaders({ 'content-type': 'application/json' });
+  if(!h.Authorization) return;
+  try{
+    await fetch('/api/auth/prefs', { method: 'PUT', headers: h,
+      body: JSON.stringify({ hiddenTabs }) });
+  }catch(e){}
+}
+
+/* ---------------- account sheet ---------------- */
+const acctState = { step: 'email', email: '', msg: '', bad: false, busy: false };
+
+function openAcct(){
+  acctState.step = state.user ? 'in' : 'email';
+  acctState.msg = ''; acctState.bad = false;
+  $('acctSheet').hidden = false;
+  renderAcct();
+}
+const closeAcct = () => { $('acctSheet').hidden = true; };
+
+function renderAcct(){
+  const el = $('acctInner');
+  if(!el) return;
+  const msg = acctState.msg
+    ? `<div class="acct-msg${acctState.bad ? ' bad' : ''}">${esc(acctState.msg)}</div>` : '';
+
+  if(state.user){
+    const hidden = state.prefs.hiddenTabs || [];
+    el.innerHTML = `
+      <h3>Your account</h3>
+      <div class="ask-note">Signing in is what makes a private call private, and what puts a
+        name on anything that spends a call credit.</div>
+      <div class="acct-you" style="margin-top:12px">
+        <b>${esc(state.user.email || 'Signed in')}</b>
+        <button class="acct-alt" id="acctOut">Sign out</button>
+      </div>
+      <div class="tabprefs">
+        <h4>Tabs to show</h4>
+        <div class="ask-note">Turn off what you never open. Saved to your account, so it
+          follows you to any device you sign in on.</div>
+        <div class="tabprefs-grid" id="tabPrefs">` +
+          TAB_ORDER.map(t=>{
+            const on = !hidden.includes(t);
+            return `<label data-on="${on ? 1 : 0}">
+              <input type="checkbox" data-tab="${t}"${on ? ' checked' : ''}>${esc(TAB_LABELS[t])}</label>`;
+          }).join('') +
+        `</div>
+        <div class="tabprefs-acts">
+          <button data-preset="everything">Show everything</button>
+          <button data-preset="calle-demo">CALL-E demo only</button>
+        </div>
+      </div>
+      ${msg}
+      <div class="tabprefs-acts" style="margin-top:14px">
+        <button id="acctClose2">Close</button>
+      </div>`;
+    return;
+  }
+
+  if(acctState.step === 'code'){
+    el.innerHTML = `
+      <h3>Check your email</h3>
+      <div class="ask-note">We sent a sign-in code to ${esc(acctState.email)}. If it arrived as a
+        link instead, opening the link signs you in too.</div>
+      <form class="acct-form" id="acctCodeForm">
+        <input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code"
+               aria-label="Sign-in code" maxlength="10" required>
+        <button type="submit"${acctState.busy ? ' disabled' : ''}>${acctState.busy ? 'Checking…' : 'Verify'}</button>
+      </form>
+      ${msg}
+      <button class="acct-alt" id="acctBack">Use a different email</button>`;
+    const i = el.querySelector('input');
+    if(i) i.focus();
+    return;
+  }
+
+  el.innerHTML = `
+    <h3>Sign in</h3>
+    <div class="ask-note">Local Atlas is free to browse without an account. Signing in is
+      needed only to request a new verified fact or a private call — both place a real
+      phone call, so both need a name attached.</div>
+    <form class="acct-form" id="acctEmailForm">
+      <input name="email" type="email" autocomplete="email" placeholder="you@example.com"
+             aria-label="Email address" value="${esc(acctState.email)}" required>
+      <button type="submit"${acctState.busy ? ' disabled' : ''}>${acctState.busy ? 'Sending…' : 'Email me a code'}</button>
+    </form>
+    ${msg}
+    <button class="acct-alt" id="acctClose2">Not now</button>`;
+  const i = el.querySelector('input');
+  if(i && !acctState.email) i.focus();
+}
 
 /* ---------------- map ---------------- */
 const map = L.map('map', { zoomControl:false }).setView([45.5, -96.5], 4);
@@ -1174,7 +1643,7 @@ async function loadPlace(place, { fly=true } = {}){
   }
   $('tabs').style.display = 'flex';
   $('tabGroups').style.display = 'flex';
-  applyTabGroup(state.tabGroup || TAB_GROUP_DEFAULT);
+  applyTabPrefs();                        // honours the account's hidden tabs
   $('alertCnt').style.display = 'none';
   msg('');
 
@@ -1240,7 +1709,7 @@ function applyTabGroup(group){
   document.querySelectorAll('#tabs .tab').forEach(t=>{
     const belongs = t.dataset.group === group;
     const hiddenBySurf = (t.id === 'surfTab' && t.dataset.coastal !== 'yes');
-    const visible = belongs && !hiddenBySurf;
+    const visible = belongs && !hiddenBySurf && !tabHidden(t.dataset.tab);
     t.style.display = visible ? '' : 'none';
     if(visible && !firstVisible) firstVisible = t.dataset.tab;
   });
@@ -1894,7 +2363,7 @@ function poiDetailHTML(it, idx){
     acts.push(`<a href="https://www.groupon.com/search?query=${encodeURIComponent(it.name+' '+state.place.name)}" target="_blank" rel="noopener">Groupon</a>`);
   }
   if(canAsk(it))
-    acts.push(`<button class="ask-btn" data-idx="${idx}">Questions Answered by Business</button>`);
+    acts.push(`<button class="ask-btn" data-idx="${idx}">Verified facts &amp; private actions</button>`);
   const saved = state.favKeys.has(normName(it.name + state.place.name));
   acts.push(`<button class="fav-btn" data-idx="${idx}">${saved ? '★ Saved' : '☆ Save'}</button>`);
   return `<div class="poi-desc" id="desc-${idx}"></div>` + rows.join('') +
@@ -2207,8 +2676,12 @@ function askCode(){
 }
 const askLive = () => !!askCode() && !!(state.calle && state.calle.realCalls);
 
-function askHeaders(){
-  const h = { 'content-type': 'application/json' };
+/* Two independent credentials, and they answer different questions. The bearer
+   token says who is asking — required for anything that can spend a credit.
+   The access code says whether a real phone may ring, which is a property of
+   the deploy rather than of the person. Neither substitutes for the other. */
+async function askHeaders(){
+  const h = await authHeaders({ 'content-type': 'application/json' });
   const code = askCode();
   if(code) h['x-atlas-access'] = code;
   return h;
@@ -2229,7 +2702,33 @@ const ASK_FAIL = {
   unknown:     'We called, but the call didn\'t produce a usable answer.'
 };
 
-function faqItemHTML(e, idx, i){
+/* A stored fact leads with its subject, not with the sentence somebody typed
+   to get it. See topicFor in calle.js — older entries have no topic and fall
+   back to their question, which is never wrong, only wordier. */
+const FACT_ICONS = [
+  [/hour|open|clos|time/i,              '◷'],
+  [/food|drink|menu|eat|snack|vending/i,'⌸'],
+  [/wheelchair|access|mobility|ramp/i,  '♿'],
+  [/park|lot/i,                         'P'],
+  [/restroom|toilet|bathroom/i,         '⌾'],
+  [/dog|pet/i,                          '⏇'],
+  [/kid|child|play|stroller/i,          '⚑'],
+  [/card|pay|price|cost|fee/i,          '▤'],
+  [/reserv|book|slot|ticket/i,          '▦']
+];
+const factIcon = e => (FACT_ICONS.find(([re]) => re.test(e.topic || e.question || '')) || [, '✓'])[1];
+
+/* "2 DAYS" reads as a freshness stamp; "Confirmed 2 days ago" reads as a
+   sentence you have to finish before you learn anything. Same number. */
+function factAge(ts){
+  const days = Math.floor((Date.now() - ts) / 86400e3);
+  if(days <= 0) return 'TODAY';
+  if(days === 1) return '1 DAY';
+  if(days < 30)  return days + ' DAYS';
+  return new Date(ts).toLocaleDateString(undefined, { month:'short', year:'numeric' }).toUpperCase();
+}
+
+function factHTML(e, idx, it){
   const answered = e.answerStatus === 'answered';
   const stale = e.expiresAt <= Date.now();
   const body = answered
@@ -2237,20 +2736,27 @@ function faqItemHTML(e, idx, i){
       (e.evidenceQuote ? `<div class="faq-quote">“${esc(e.evidenceQuote)}”</div>` : '')
     : `<div class="faq-a muted">${esc(ASK_FAIL[e.answerStatus] || ASK_FAIL.unknown)}</div>`;
 
-  const meta = [];
-  meta.push(answered
-    ? `<span class="faq-stamp${stale ? ' stale' : ''}">${stale ? 'Needs recheck' : 'Confirmed ' + relDay(e.collectedAt)}</span>`
-    : `<span class="faq-stamp stale">Called ${relDay(e.collectedAt)}</span>`);
-  if(e.staffConfidence === 'hedged') meta.push('staff were unsure');
-  if(e.simulated) meta.push(`<span class="faq-sim">simulated call</span>`);
+  /* Who said it and who asked. Both halves matter: "staff" is the reason the
+     answer counts for anything, and "CALL-E" is the reason it exists at all —
+     leaving the machine out would be passing off an automated call as a
+     conversation somebody had. */
+  const src = [`${esc(it.name)} staff · CALL-E`];
+  if(e.staffConfidence === 'hedged') src.push('staff were unsure');
+  if(e.simulated) src.push(`<span class="faq-sim">simulated call</span>`);
+
   /* Always offer a recheck, but only shout about it when the record is
      actually suspect. A stored answer is the point of the feature, so the
      quiet variant keeps reuse the default while still admitting that hours
      and policies change well before a 90-day TTL expires — and that whoever
      is reading the page may simply know better. */
-  meta.push(`<button class="ask-again${answered && !stale ? ' quiet' : ''}" data-idx="${idx}"
-    data-q="${esc(e.question)}" title="Places a fresh call and replaces this answer"
-    >${answered && !stale ? 'Recheck' : 'Ask again'}</button>`);
+  /* A recheck of a private result has to stay private, and has to carry the
+     same visit with it — otherwise the second call is a different question
+     whose answer lands on the public listing. The privacy of an entry travels
+     on the button that reasks it. */
+  const recheck = `<button class="ask-again${answered && !stale ? ' quiet' : ''}" data-idx="${idx}"
+      data-q="${esc(e.question)}"${e.private ? ` data-priv="1" data-intent="${esc(e.intent || '')}" data-visit="${esc(e.visitAt || '')}"` : ''}
+      title="Places a fresh call and replaces this answer"
+      >${answered && !stale ? 'Recheck' : 'Ask again'}</button>`;
 
   /* The raw transcript is deliberately not sent to the browser — it is a
      stranger's phone conversation, and publishing it verbatim reads as
@@ -2261,38 +2767,163 @@ function faqItemHTML(e, idx, i){
          <p>${esc(e.callSummary)}</p></details>`
     : '';
 
-  return `<div class="faq-item">
-      <div class="faq-q">${esc(e.question)}</div>
-      ${body}
-      <div class="faq-meta">${meta.join('')}</div>
-      ${note}
+  return `<div class="fact">
+      <div class="fact-ico">${factIcon(e)}</div>
+      <div class="fact-main">
+        <div class="fact-top">
+          <div class="fact-title">${esc(e.topic || e.question)}</div>
+          <div class="fact-age${answered && !stale ? '' : ' stale'}">${answered && !stale ? '✓ ' : ''}${esc(factAge(e.collectedAt))}</div>
+        </div>
+        ${body}
+        <div class="fact-src"><span>${src.join(' · ')}</span>${recheck}</div>
+        ${note}
+      </div>
     </div>`;
 }
 
+/* Anything that can dial costs a credit, so the server refuses it without an
+   account. The panel says so where the form would have been rather than
+   letting someone compose a question and only then discover the wall. */
+const signInPrompt = what => `<div class="ask-note" style="margin:8px 0">
+    ${esc(what)} places a real phone call, so it needs an account.
+    <button class="ask-signin" style="margin-left:4px">Sign in</button>
+  </div>`;
+
+const HAS_ACCOUNTS = () => !!state.auth;
+const SIGNED_IN = () => !!state.user;
+
 function renderAsk(it, box, idx){
-  const faq = it._faq || [];
+  const faq  = it._faq  || [];
+  const priv = it._priv || [];
   const sugg = it._sugg || [];
   const asked = new Set(faq.map(e=>e.question.toLowerCase()));
   const chips = sugg.filter(s=>!asked.has(s.text.toLowerCase())).slice(0, 6);
+  const seg = it._seg || 'facts';
 
-  box.innerHTML = `<div class="ask-panel">
-      <div class="ask-head">
-        <h4>Questions Answered by Business</h4>
-        <span class="ask-note">${faq.length ? faq.length + ' on file' : 'none yet'}</span>
+  box.innerHTML = `<div class="ask-panel${it._collapsed ? ' collapsed' : ''}">
+      <div class="ask-card-head" role="button" tabindex="0">
+        <span class="fact-ico">✓</span>
+        <h4>Verified facts &amp; private actions</h4>
+        <span class="chev">▲</span>
       </div>
-      ${faq.length ? faq.map((e,i)=>faqItemHTML(e, idx, i)).join('')
-                   : `<div class="ask-note" style="margin-bottom:9px">Nobody has asked this place anything yet. Ask the first question and the answer stays here for everyone.</div>`}
-      <div class="ask-note" style="margin:9px 0 5px">Ask ${esc(it.name)} one factual question — we phone them and post the answer here.</div>
-      ${chips.length ? `<div class="ask-chips">` +
-        chips.map(s=>`<button data-t="${esc(s.id || '')}" data-q="${esc(s.text)}"${s.generated ? ' class="gen"' : ''}>${esc(s.text)}</button>`).join('') +
-        `</div>` : ''}
-      <form class="ask-form">
-        <input name="q" placeholder="Or type your own question…" maxlength="180" aria-label="Your question">
-        <button type="submit">Ask</button>
-      </form>
-      <div class="ask-err" hidden></div>
-      ${askModeHTML(it)}
+      <div class="ask-card-body">
+        <div class="ask-lede">
+          <span aria-hidden="true">✆</span>
+          <span>Local Atlas calls the place only when a useful fact is missing or you ask it
+            to complete a private task.</span>
+        </div>
+        <div class="ask-segs" role="tablist">
+          <button role="tab" data-seg="facts" aria-selected="${seg === 'facts'}">
+            ✓ Verified Facts <span class="segcount">${faq.length}</span>
+          </button>
+          <button role="tab" data-seg="private" aria-selected="${seg === 'private'}">
+            🔒 Private Actions${priv.length ? ` <span class="segcount">${priv.length}</span>` : ''}
+          </button>
+        </div>
+        ${seg === 'facts' ? factsPaneHTML(it, idx, faq, chips) : privatePaneHTML(it, idx, priv)}
+        <div class="ask-err" hidden></div>
+        ${askModeHTML(it)}
+      </div>
     </div>`;
+}
+
+function factsPaneHTML(it, idx, faq, chips){
+  return `
+    <div class="ask-sec">
+      <h5>Confirmed by phone</h5>
+      <span class="tag">Reusable · dated</span>
+    </div>
+    ${faq.length ? faq.map(e=>factHTML(e, idx, it)).join('')
+                 : `<div class="ask-note" style="margin-bottom:9px">Nothing confirmed here yet.
+                     Ask the first question and the answer stays on this listing for everyone.</div>`}
+    <div class="ask-next">
+      <h5>What should we verify next?</h5>
+      <div class="ask-note" style="margin-top:3px">Pick one useful fact. A fresh answer is
+        shared here for future visitors.</div>
+      ${!SIGNED_IN() ? signInPrompt('Verifying a new fact') : `
+        ${chips.length ? `<div class="ask-chips" style="margin-top:8px">` +
+          chips.map(s=>`<button data-t="${esc(s.id || '')}" data-q="${esc(s.text)}"${s.generated ? ' class="gen"' : ''}>${esc(s.text)}</button>`).join('') +
+          `</div>` : ''}
+        <form class="ask-form">
+          <input name="q" placeholder="Or type your own question…" maxlength="180" aria-label="Your question">
+          <button type="submit">Ask</button>
+        </form>`}
+    </div>`;
+}
+
+/* Two intents rather than a blank box. "What should we ask?" with no framing
+   produces either nothing or an essay; naming the two things people actually
+   phone ahead about gets a usable question and tells the agent enough about
+   the visit to make the answer worth having. */
+function privatePaneHTML(it, idx, priv){
+  const intent = it._intent || 'visit';
+  const d = new Date(Date.now() + 86400e3);          // tomorrow, the common case
+  const dv = it._visitDate || d.toISOString().slice(0, 10);
+  const tv = it._visitTime || '14:00';
+  const times = [];
+  for(let h = 8; h <= 20; h++){
+    const hh = String(h).padStart(2, '0') + ':00';
+    const ampm = (h % 12 === 0 ? 12 : h % 12) + ':00 ' + (h < 12 ? 'AM' : 'PM');
+    times.push(`<option value="${hh}"${hh === tv ? ' selected' : ''}>${ampm}</option>`);
+  }
+
+  return `
+    <div class="ask-sec">
+      <h5>Call ahead for me</h5>
+      <span class="priv-badge">🔒 Private</span>
+    </div>
+    <div class="priv-note">
+      <span aria-hidden="true">✓</span>
+      <span>Your request and the call result stay in your account. They are never added
+        to the public listing.</span>
+    </div>
+    ${!SIGNED_IN() ? signInPrompt('A private call') : `
+      <label class="priv-opt" data-on="${intent === 'visit' ? 1 : 0}">
+        <input type="radio" name="intent-${idx}" value="visit"${intent === 'visit' ? ' checked' : ''}>
+        <span><b>Check before my visit</b>
+          <span>Confirm today's conditions, an accessibility need, or a specific amenity.</span></span>
+      </label>
+      <label class="priv-opt" data-on="${intent === 'group' ? 1 : 0}">
+        <input type="radio" name="intent-${idx}" value="group"${intent === 'group' ? ' checked' : ''}>
+        <span><b>Plan a group visit</b>
+          <span>Ask about groups, busy times, parking, or where caregivers can meet.</span></span>
+      </label>
+      <form class="priv-form">
+        <div class="priv-when">
+          <label><span class="field-label">Visit date</span>
+            <input type="date" name="date" value="${esc(dv)}"></label>
+          <label><span class="field-label">Approx. time</span>
+            <select name="time">${times.join('')}</select></label>
+        </div>
+        <div class="priv-q">
+          <span class="field-label">What should we ask?</span>
+          <textarea name="q" maxlength="240"
+            placeholder="Is the sensory play equipment working today, and is the accessible restroom nearby open?">${esc(it._q || '')}</textarea>
+        </div>
+        <div class="priv-disc">
+          <span aria-hidden="true">👁</span>
+          <span>CALL-E will identify itself as an automated assistant and ask only what you
+            review on the next screen.</span>
+        </div>
+        <button type="submit" class="priv-go">📋 Review private call</button>
+      </form>`}
+    ${SIGNED_IN() && priv.length ? `<div class="priv-result">
+        <div class="ask-sec"><h5>Your private results</h5>
+          <span class="tag">Visible only to you</span></div>
+        ${priv.map(e=>factHTML(e, idx, it)).join('')}
+      </div>` : ''}`;
+}
+
+/* After a sign-in or sign-out, any place panel already on screen is showing the
+   wrong half of the gate. Re-render the open ones in place. */
+function refreshOpenAskPanels(){
+  document.querySelectorAll('.ask-box:not([hidden])').forEach(box=>{
+    const idx = +String(box.id).split('-')[1];
+    const it = (state.currentPOIs || [])[idx];
+    if(!it) return;
+    if(SIGNED_IN() && !it._priv) return loadAsk(it, box, idx);
+    renderAsk(it, box, idx);
+  });
 }
 
 /* The panel always states which of the two things the next click will do. The
@@ -2326,15 +2957,13 @@ const prettyPhone = p => {
 
 function renderConfirm(it, box, idx, ask, preview){
   it._pendingAsk = ask;
-  const panel = box.querySelector('.ask-panel');
+  const panel = box.querySelector('.ask-card-body') || box.querySelector('.ask-panel');
   if(!panel) return;
-  const form = panel.querySelector('.ask-form');
-  if(form) form.hidden = true;
-  const chips = panel.querySelector('.ask-chips');
-  if(chips) chips.hidden = true;
+  panel.querySelectorAll('.ask-form, .ask-chips, .priv-form').forEach(n=>{ n.hidden = true; });
   panel.insertAdjacentHTML('beforeend', `
     <div class="ask-confirm">
       <div class="ask-confirm-h">This will ring a real phone</div>
+      ${ask.isPrivate ? `<div class="priv-badge" style="margin-bottom:6px">🔒 Private — the result is yours alone</div>` : ''}
       <div class="ask-note">Calling ${esc(preview.placeName || it.name)} on ${esc(prettyPhone(preview.phone))}. The agent opens with:</div>
       <div class="faq-quote">“${esc(preview.opener)}”</div>
       <div class="ask-note">Then asks exactly this, and nothing else:</div>
@@ -2360,7 +2989,22 @@ async function loadAsk(it, box, idx){
       .then(r=>r.ok ? r.json() : { items: [] }).then(j=>j.items || []).catch(()=>[])
   ]);
   it._faq = faq; it._sugg = sugg;
+  /* Private results are a second request rather than a field on the first,
+     because /api/place-faq is public and cacheable and this one is neither.
+     Skipped entirely when signed out — there is nothing to ask for. */
+  it._priv = SIGNED_IN() ? await loadPrivate(it) : [];
   renderAsk(it, box, idx);
+}
+
+async function loadPrivate(it){
+  try{
+    const h = await authHeaders({ 'content-type': 'application/json' });
+    if(!h.Authorization) return [];
+    const r = await fetchT('/api/private-faq', { method:'POST', headers: h,
+      body: JSON.stringify(askPlaceBody(it)) }, 9000);
+    if(!r.ok) return [];
+    return (await r.json()).items || [];
+  }catch(e){ return []; }
 }
 
 /* One slot below the form carries both rejections and the unlock prompt; `calm`
@@ -2381,7 +3025,7 @@ function askError(box, msg, offerCode, calm){
 }
 
 async function submitAsk(it, box, idx, payload){
-  const form = box.querySelector('.ask-form');
+  const form = box.querySelector('.priv-form') || box.querySelector('.ask-form');
   const btn = form && form.querySelector('button');
   if(btn) btn.disabled = true;
   const err = box.querySelector('.ask-err');
@@ -2390,12 +3034,21 @@ async function submitAsk(it, box, idx, payload){
   const { _label, ...ask } = payload;
   let j = {};
   try{
-    const r = await fetchT('/api/ask-place', { method:'POST', headers: askHeaders(),
+    const r = await fetchT('/api/ask-place', { method:'POST', headers: await askHeaders(),
       body: JSON.stringify({ place: askPlaceBody(it), ...ask }) }, 25000);
     j = await r.json().catch(()=>({}));
     if(btn) btn.disabled = false;
     // the server will not dial until it has been told the preview was seen
     if(r.status === 428 && j.needsConfirm) return renderConfirm(it, box, idx, ask, j.preview);
+    /* Two different 401s reach here. auth_required means nobody is signed in,
+       which the sign-in sheet fixes; anything else is the real-call code, which
+       the inline unlock form fixes. Offering the wrong one is a dead end. */
+    if(r.status === 401 && j.code === 'auth_required'){
+      askError(box, 'Sign in to request a call.', false, true);
+      return openAcct();
+    }
+    if(r.status === 503 && j.code === 'auth_unconfigured')
+      return askError(box, j.error);
     if(r.status === 401) return askError(box, j.error || 'This feature is locked.', true);
     // the upstream error code is the actionable half — show it, don't swallow it
     if(!r.ok && r.status !== 202)
@@ -2408,17 +3061,26 @@ async function submitAsk(it, box, idx, payload){
 
   // already answered by an earlier caller — nothing to wait for
   if(j.reused && j.entry){
-    it._faq = [j.entry, ...(it._faq || []).filter(e=>e.qHash !== j.entry.qHash)];
+    absorbEntry(it, j.entry);
     return renderAsk(it, box, idx);
   }
   if(!j.callId){ if(btn) btn.disabled = false; return askError(box, j.error || 'The call could not be started.'); }
   waitForAnswer(it, box, idx, j.callId, payload.question || payload._label || '');
 }
 
+/* A finished call lands in exactly one of the two lists, and the entry itself
+   says which — the server marks a private result private, so the client never
+   has to remember what it asked for or guess where the answer belongs. */
+function absorbEntry(it, entry){
+  const key = entry.private ? '_priv' : '_faq';
+  it[key] = [entry, ...(it[key] || []).filter(e=>e.qHash !== entry.qHash)];
+  if(entry.private) it._seg = 'private';
+}
+
 /* A phone call takes 30-90 s. The wait is shown, not hidden — a silent minute
    reads as a hung page, and the call is the thing worth watching. */
 function waitForAnswer(it, box, idx, callId, label){
-  const panel = box.querySelector('.ask-panel');
+  const panel = box.querySelector('.ask-card-body') || box.querySelector('.ask-panel');
   if(panel) panel.insertAdjacentHTML('beforeend',
     `<div class="ask-live"><div class="spinner"></div><span>Calling ${esc(it.name)} now…${label ? ' ' + esc(label) : ''}</span></div>`);
   clearTimeout(it._askTimer);
@@ -2427,10 +3089,13 @@ function waitForAnswer(it, box, idx, callId, label){
   const tick = async ()=>{
     if(!box.isConnected) return;                         // list re-rendered under us
     try{
-      const r = await fetchT('/api/ask-place/' + encodeURIComponent(callId), {}, 9000);
+      /* Signed-in headers on the poll too: a private result is refused to
+         anyone who cannot prove they own it, including the tab that started it. */
+      const r = await fetchT('/api/ask-place/' + encodeURIComponent(callId),
+        { headers: await authHeaders() }, 9000);
       const j = await r.json().catch(()=>({}));
       if(j.state === 'done' && j.entry){
-        it._faq = [j.entry, ...(it._faq || []).filter(e=>e.qHash !== j.entry.qHash)];
+        absorbEntry(it, j.entry);
         return renderAsk(it, box, idx);
       }
     }catch(e){}
@@ -2475,6 +3140,48 @@ contentEl.addEventListener('submit', ev=>{
   if(q) submitAsk(it, box, idx, { question: q });
 });
 
+/* The private form is a separate submit path because it composes a visit out of
+   three fields before it has a question to send. The date and time are put into
+   words here rather than sent as ISO values: the server folds them straight
+   into the sentence the agent reads aloud, and "2026-08-13T14:00" is not
+   something anyone should say down a phone. */
+contentEl.addEventListener('submit', ev=>{
+  const form = ev.target.closest('.priv-form');
+  if(!form || !state.currentPOIs) return;
+  ev.preventDefault();
+  const box = form.closest('.ask-box');
+  if(!box) return;
+  const idx = +box.id.split('-')[1];
+  const it = state.currentPOIs[idx];
+  if(!it) return;
+
+  const q = (form.elements.q.value || '').trim();
+  if(!q) return askError(box, 'Say what we should ask them.');
+
+  const date = form.elements.date.value || '';
+  const time = form.elements.time.value || '';
+  // remembered so a validation bounce doesn't wipe what was typed
+  it._visitDate = date; it._visitTime = time; it._q = q;
+
+  submitAsk(it, box, idx, {
+    isPrivate: true, question: q, intent: it._intent || 'visit',
+    visitAt: visitPhrase(date, time)
+  });
+});
+
+/* "on Thursday 13 August at about 2pm" — a phrase that can be read out, with
+   the year dropped because nobody says it and a missing date simply omitted
+   rather than guessed. */
+function visitPhrase(date, time){
+  if(!date) return '';
+  const [h, m] = String(time || '14:00').split(':').map(Number);
+  const d = new Date(date + 'T00:00:00');
+  if(isNaN(d)) return '';
+  const day = d.toLocaleDateString('en-US', { weekday:'long', day:'numeric', month:'long' });
+  const hh = (h % 12 === 0 ? 12 : h % 12) + (m ? ':' + String(m).padStart(2, '0') : '');
+  return `on ${day} at about ${hh}${h < 12 ? 'am' : 'pm'}`;
+}
+
 contentEl.addEventListener('click', ev=>{
   const ab = ev.target.closest('.ask-btn');
   if(ab && state.currentPOIs){
@@ -2484,6 +3191,43 @@ contentEl.addEventListener('click', ev=>{
       box.hidden = !box.hidden;
       if(!box.hidden && !it._faq) loadAsk(it, box, idx);
       else if(!box.hidden) renderAsk(it, box, idx);
+    }
+    return;
+  }
+  /* --- the two-segment card --- */
+  const seg = ev.target.closest('.ask-segs button');
+  if(seg && state.currentPOIs){
+    const box = seg.closest('.ask-box');
+    const idx = box ? +box.id.split('-')[1] : -1;
+    const it = state.currentPOIs[idx];
+    if(it && box){ it._seg = seg.dataset.seg; renderAsk(it, box, idx); }
+    return;
+  }
+  const head = ev.target.closest('.ask-card-head');
+  if(head && state.currentPOIs){
+    const box = head.closest('.ask-box');
+    const idx = box ? +box.id.split('-')[1] : -1;
+    const it = state.currentPOIs[idx];
+    if(it && box){ it._collapsed = !it._collapsed; renderAsk(it, box, idx); }
+    return;
+  }
+  if(ev.target.closest('.ask-signin')) return openAcct();
+  const opt = ev.target.closest('.priv-opt');
+  if(opt && state.currentPOIs){
+    const box = opt.closest('.ask-box');
+    const idx = box ? +box.id.split('-')[1] : -1;
+    const it = state.currentPOIs[idx];
+    const input = opt.querySelector('input');
+    if(it && box && input){
+      it._intent = input.value;
+      /* Keep what is already typed — re-rendering the pane to move a radio
+         button should not cost someone their question. */
+      const f = box.querySelector('.priv-form');
+      if(f){ it._visitDate = f.elements.date.value; it._visitTime = f.elements.time.value; }
+      const typed = f ? f.elements.q.value : '';
+      renderAsk(it, box, idx);
+      const f2 = box.querySelector('.priv-form');
+      if(f2 && typed) f2.elements.q.value = typed;
     }
     return;
   }
@@ -2502,7 +3246,14 @@ contentEl.addEventListener('click', ev=>{
     const box = again.closest('.ask-box');
     const idx = box ? +box.id.split('-')[1] : -1;
     const it = state.currentPOIs[idx];
-    if(it && box) submitAsk(it, box, idx, { question: again.dataset.q, force: true });
+    if(it && box) submitAsk(it, box, idx, {
+      question: again.dataset.q, force: true,
+      /* A private entry is reasked privately. The composed question already
+         contains the visit, so these ride along only so the stored record keeps
+         saying which visit it was about. */
+      ...(again.dataset.priv ? { isPrivate: true, intent: again.dataset.intent || 'visit',
+                                 visitAt: again.dataset.visit || '' } : {})
+    });
     return;
   }
   const unlock = ev.target.closest('.ask-unlock');
@@ -2531,7 +3282,7 @@ contentEl.addEventListener('click', ev=>{
       it._pendingAsk = null;
       const card = box.querySelector('.ask-confirm');
       if(card) card.remove();
-      box.querySelectorAll('.ask-form, .ask-chips').forEach(n=>{ n.hidden = false; });
+      box.querySelectorAll('.ask-form, .ask-chips, .priv-form').forEach(n=>{ n.hidden = false; });
       submitAsk(it, box, idx, { ...ask, confirmed: true, _label: ask.question || '' });
     }
     return;
@@ -3826,6 +4577,92 @@ $('headToggle').addEventListener('click', ()=>{
   $('headToggle').title = mini ? 'Show search' : 'Hide search';
 });
 
+/* ---------------- account sheet wiring ---------------- */
+$('acctBtn').addEventListener('click', openAcct);
+$('acctSheet').addEventListener('click', ev=>{ if(ev.target === $('acctSheet')) closeAcct(); });
+document.addEventListener('keydown', ev=>{
+  if(ev.key === 'Escape' && !$('acctSheet').hidden) closeAcct();
+});
+
+$('acctInner').addEventListener('submit', async ev=>{
+  ev.preventDefault();
+  const f = ev.target;
+  if(acctState.busy) return;
+
+  if(f.id === 'acctEmailForm'){
+    const email = String(f.email.value || '').trim();
+    if(!email) return;
+    acctState.busy = true; acctState.msg = ''; acctState.email = email;
+    renderAcct();
+    try{
+      await sendOtp(email);
+      acctState.step = 'code'; acctState.msg = ''; acctState.bad = false;
+    }catch(e){
+      acctState.msg = e.message; acctState.bad = true;
+    }
+    acctState.busy = false;
+    renderAcct();
+    return;
+  }
+
+  if(f.id === 'acctCodeForm'){
+    const code = String(f.code.value || '').trim();
+    if(!code) return;
+    acctState.busy = true; acctState.msg = '';
+    renderAcct();
+    try{
+      await verifyOtp(acctState.email, code);
+      await loadMe();
+      renderAcctBtn();
+      applyTabPrefs();
+      acctState.busy = false;
+      acctState.step = 'in';
+      renderAcct();
+      /* Re-render an open place panel so the sign-in gate it was showing turns
+         back into the form it was gating. */
+      refreshOpenAskPanels();
+    }catch(e){
+      acctState.busy = false; acctState.msg = e.message; acctState.bad = true;
+      renderAcct();
+    }
+  }
+});
+
+$('acctInner').addEventListener('click', async ev=>{
+  if(ev.target.closest('#acctClose2')) return closeAcct();
+  if(ev.target.closest('#acctBack')){
+    acctState.step = 'email'; acctState.msg = ''; acctState.bad = false;
+    return renderAcct();
+  }
+  if(ev.target.closest('#acctOut')){
+    await signOut();
+    acctState.step = 'email';
+    renderAcct();
+    refreshOpenAskPanels();
+    return;
+  }
+  const preset = ev.target.closest('[data-preset]');
+  if(preset){
+    await savePrefs([...(TAB_PRESETS[preset.dataset.preset] || [])]);
+    return renderAcct();
+  }
+});
+
+$('acctInner').addEventListener('change', async ev=>{
+  const cb = ev.target.closest('#tabPrefs input[type="checkbox"]');
+  if(!cb) return;
+  const boxes = [...$('acctInner').querySelectorAll('#tabPrefs input[type="checkbox"]')];
+  /* An app with every tab switched off is not a preference, it's a blank
+     screen — so the last one on cannot be turned off. */
+  if(!cb.checked && !boxes.some(b=>b.checked)){
+    cb.checked = true;
+    acctState.msg = 'Keep at least one tab visible.'; acctState.bad = true;
+    return renderAcct();
+  }
+  cb.closest('label').dataset.on = cb.checked ? 1 : 0;
+  await savePrefs(boxes.filter(b=>!b.checked).map(b=>b.dataset.tab));
+});
+
 /* ---------------- mobile sheet toggle ---------------- */
 (function initSheetDrag(){
   const handle = $('sheetToggle'), panel = $('panel'), body = document.body;
@@ -3904,6 +4741,7 @@ if('serviceWorker' in navigator && location.protocol === 'https:'){
   navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
 (async ()=>{
+  initAuth().catch(()=>{});      // never blocks the map; the panel just stays anonymous
   storeGet('recent-places').then(l=>{ if(l) renderRecents(l); });
   storeGet('favorites').then(l=>{ if(l) state.favKeys = new Set(l.map(f=>normName(f.name + f.place))); });
   const fromHash = parseHash();

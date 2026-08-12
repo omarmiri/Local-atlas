@@ -85,9 +85,14 @@ async function cached(key, ttlMs, fn){
   return v;
 }
 
+/* Supabase's anon key and URL are public by design — they ship to the browser
+   and do nothing without a user token — so they ride along on the health check
+   rather than being pasted into index.html, which would put a deploy-specific
+   value under version control and make a second deploy impossible to configure
+   differently. */
 app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, goog: !!GOOG, tm: !!TM, ai: !!AI, owm: !!OWM,
   redis: redisState.configured && redisState.ok !== false, nps: !!NPS, windy: !!WINDY, nasa: !!NASA,
-  calle: require('./calle').info() }));
+  calle: require('./calle').info(), auth: require('./auth').info() }));
 
 /* Forces a real Upstash round-trip and reports the truth. Use this rather than
    the health flag when asking "is the shared cache actually working?" */
@@ -1251,6 +1256,46 @@ app.get('/api/layer-test', async (req, res) => {
    calle.js. Calls are async: ask-place returns a call id, the answer lands
    by webhook, and /api/ask-place/:id is the polling fallback. */
 const calle = require('./calle');
+const auth = require('./auth');
+
+/* ---- accounts ----
+   attachUser is mounted per-route rather than app-wide on purpose: it can cost
+   a round-trip to Supabase, and the map, the tiles and every listing endpoint
+   have no idea who you are and no reason to find out. Only the routes below
+   care. See auth.js for why identity is Supabase's and data is not. */
+
+app.get('/api/auth/me', auth.attachUser, async (req, res) => {
+  if(!req.user) return res.json({ user: null, prefs: null });
+  try{
+    res.json({ user: req.user, prefs: await auth.getPrefs(req.user.id) });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+/* Tab visibility. Which tabs a given account shows is the whole per-user
+   feature-flag story today — it exists so a demo can be one clean tab instead
+   of eighteen, and so anyone can turn off the parts of this app they never
+   open. Nothing here gates a paid or private feature: those are decided
+   server-side by requireUser, never by what the client was told to draw. */
+app.get('/api/auth/prefs', auth.attachUser, auth.requireUser, async (req, res) => {
+  try{ res.json(await auth.getPrefs(req.user.id)); }
+  catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
+app.put('/api/auth/prefs', express.json({ limit: '4kb' }), auth.attachUser, auth.requireUser,
+  async (req, res) => {
+    try{ res.json(await auth.setPrefs(req.user.id, req.body || {})); }
+    catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+  });
+
+/* One account's private call results for one place. */
+app.post('/api/private-faq', express.json({ limit: '8kb' }), auth.attachUser, auth.requireUser,
+  async (req, res) => {
+    try{
+      const p = req.body || {};
+      if(!p.name) return res.status(400).json({ error: 'place required' });
+      res.json({ items: await calle.getPrivate(req.user.id, p) });
+    }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+  });
 
 /* CALL-E throws a typed CalleAPIError carrying `code`, `status` and `details`,
    and those are the fields that say *why*. Collapsing them to e.message loses
@@ -1266,17 +1311,26 @@ function calleErrBody(e){
 const calleErrStatus = e =>
   (e && Number.isInteger(e.status) && e.status >= 400 && e.status < 600) ? e.status : 502;
 
-app.post('/api/ask-place', express.json({ limit: '8kb' }), async (req, res) => {
-  try{
-    const { place, question, templateId, confirmed, force } = req.body || {};
-    if(!place || !place.name || place.lat == null || place.lon == null)
-      return res.status(400).json({ error: 'place {name, lat, lon, phone} required' });
-    const r = await calle.askPlace({ place, question, templateId,
-      confirmed: confirmed === true, force: force === true,
-      accessCode: req.get('x-atlas-access') || '' });
-    res.status(r.status || 200).json(r);
-  }catch(e){ res.status(calleErrStatus(e)).json(calleErrBody(e)); }
-});
+/* Every path through here can spend a CALL-E credit, so every path through
+   here needs a name attached — that is the whole reason this app grew accounts.
+   Note that requireUser sits in front of *both* kinds of ask: a new verified
+   fact and a private action cost the same credit, and reading an answer someone
+   already collected still costs nothing and still needs nobody. */
+app.post('/api/ask-place', express.json({ limit: '8kb' }), auth.attachUser, auth.requireUser,
+  async (req, res) => {
+    try{
+      const { place, question, templateId, confirmed, force,
+              isPrivate, intent, visitAt } = req.body || {};
+      if(!place || !place.name || place.lat == null || place.lon == null)
+        return res.status(400).json({ error: 'place {name, lat, lon, phone} required' });
+      const r = await calle.askPlace({ place, question, templateId,
+        confirmed: confirmed === true, force: force === true,
+        isPrivate: isPrivate === true, uid: req.user.id,
+        intent: String(intent || ''), visitAt: String(visitAt || ''),
+        accessCode: req.get('x-atlas-access') || '' });
+      res.status(r.status || 200).json(r);
+    }catch(e){ res.status(calleErrStatus(e)).json(calleErrBody(e)); }
+  });
 
 /* Lets the unlock form tell a wrong code from a working one without having to
    start a call to find out. Reveals only whether the code matches. */
@@ -1324,11 +1378,14 @@ app.get('/api/calle/goals', async (req, res) => {
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
-app.get('/api/ask-place/:id', async (req, res) => {
+/* Polling stays open to anonymous callers — a public call in flight is nobody's
+   secret — but the uid is passed through so pollCall can refuse to hand a
+   private result to anyone but its owner. */
+app.get('/api/ask-place/:id', auth.attachUser, async (req, res) => {
   try{
     const id = String(req.params.id || '');
     if(!/^call_[\w-]+$/.test(id)) return res.status(400).json({ error: 'bad call id' });
-    const r = await calle.pollCall(id);
+    const r = await calle.pollCall(id, req.user ? req.user.id : '');
     res.status(r.status || 200).json(r);
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
