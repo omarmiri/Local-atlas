@@ -53,16 +53,48 @@ returns a boolean per key so you can confirm what's wired.
 
 ### Supabase setup
 
+**Do step 2 first.** Everything else can be right and sign-in will still fail
+without it, in a way that looks like a bug in this app and is not.
+
 1. Create a project, then **Project Settings → API** for the URL and the `anon` key.
-2. **Authentication → Providers → Email**: enable it. Confirmations on or off both work.
-3. **Authentication → Email Templates → Magic Link**: add `{{ .Token }}` to the body to get a
+2. **Authentication → URL Configuration** — two separate fields, both required:
+   - **Site URL** → `https://<your-host>` . It defaults to `http://localhost:3000`,
+     and it is where Supabase sends the browser after *every* successful sign-in.
+     Leave it and users land on a dev server that isn't running, holding a
+     perfectly valid token they can see in the address bar.
+   - **Redirect URLs** → add `https://<your-host>/**`. This is the allow-list. The
+     app asks to be returned to its own origin; if that origin is not listed,
+     Supabase silently discards the request and falls back to Site URL.
+
+   Neither is visible from the client, and no code change can work around either
+   — the redirect is decided on Supabase's servers before this app runs. To check
+   them from outside the dashboard, watch where a deliberately invalid verify
+   redirects to:
+   ```
+   curl -sI -o /dev/null -D - --max-redirs 0 \
+     "$SUPABASE_URL/auth/v1/verify?token=probe&type=magiclink" | grep -i location
+   ```
+   With no `redirect_to`, that Location *is* the Site URL. Repeat it with
+   `&redirect_to=<your-host>` — if the answer doesn't change, your origin isn't
+   allow-listed.
+3. **Authentication → Providers → Email**: enable it. Confirmations on or off both work.
+   **Google** is the better path for a demo — no inbox, no rate limit. Enable it here with a
+   client ID/secret from Google Cloud Console, whose authorized redirect URI must be
+   `https://<project-ref>.supabase.co/auth/v1/callback`. The sign-in sheet only offers a
+   provider that `/auth/v1/settings` reports as enabled, so the button appears by itself.
+   Note that a fresh Google consent screen sits in **Testing** mode and admits only listed
+   test users — publish it before anyone else tries to sign in.
+4. **Authentication → Email Templates → Magic Link**: add `{{ .Token }}` to the body to get a
    **6-digit code**, which is what the sign-in sheet asks for. Leaving the default link-only
    template also works — clicking the link returns to the app with the session in the URL
    fragment, which the page consumes and scrubs — but the code is the better demo: a link
    opens a new tab and loses the map state.
-4. Free-tier projects **pause after a stretch of inactivity**, and a paused project is a broken
+5. Free-tier projects **pause after a stretch of inactivity**, and a paused project is a broken
    sign-in. Check the current threshold before relying on it for a demo; `SELF_PING_URL` keeps
    Render warm but does nothing for Supabase.
+6. The built-in SMTP sender allows only a couple of emails per hour — it is documented as
+   development-only. Wire up **Project Settings → Authentication → SMTP Settings** before any
+   event where more than one person signs up.
 
 ## Deploy on Render (Node Web Service)
 
