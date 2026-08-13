@@ -1025,7 +1025,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.3</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.4</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -3173,12 +3173,47 @@ async function loadAsk(it, box, idx){
         price: it.price ?? null, website: it.website || '' }, category: state.tab }) }, 12000)
       .then(r=>r.ok ? r.json() : { items: [] }).then(j=>j.items || []).catch(()=>[])
   ]);
-  it._faq = faq; it._sugg = sugg;
+  it._faq = faq; it._sugg = sugg; it._faqAt = Date.now();
   /* Private results are a second request rather than a field on the first,
      because /api/place-faq is public and cacheable and this one is neither.
      Skipped entirely when signed out — there is nothing to ask for. */
   it._priv = SIGNED_IN() ? await loadPrivate(it) : [];
   renderAsk(it, box, idx);
+}
+
+/* ---- keeping an open panel honest ----
+   `it._faq` is loaded once and then lives as long as the POI object does,
+   which is until the place, tab or radius changes. That was fine when the only
+   way an answer could appear was your own call in this tab, because absorbEntry
+   folds that straight into the array. It stops being fine the moment the
+   feature works as designed: these facts are shared, so somebody else's call —
+   or your own from another device — lands on the server and this panel goes on
+   showing what it fetched half an hour ago.
+
+   Revalidate on open: render the cached copy immediately so reopening stays
+   instant, then refetch behind it and re-render only if something actually
+   changed. The short floor keeps a toggled panel from firing a request per
+   click while still catching anything that landed since. */
+const ASK_REVALIDATE_MS = 30000;
+const faqFingerprint = list =>
+  (list || []).map(e => `${e.qHash}:${e.collectedAt}`).sort().join('|');
+
+async function revalidateAsk(it, box, idx){
+  if(it._faqAt && Date.now() - it._faqAt < ASK_REVALIDATE_MS) return;
+  it._faqAt = Date.now();
+  try{
+    const r = await fetchT('/api/place-faq', { method:'POST',
+      headers: {'content-type':'application/json'},
+      body: JSON.stringify(askPlaceBody(it)) }, 9000);
+    if(!r.ok) return;
+    const faq = (await r.json()).items || [];
+    const priv = SIGNED_IN() ? await loadPrivate(it) : [];
+    if(faqFingerprint(faq) === faqFingerprint(it._faq) &&
+       faqFingerprint(priv) === faqFingerprint(it._priv)) return;
+    it._faq = faq; it._priv = priv;
+    // the panel may have been closed or the list rebuilt while we were away
+    if(box.isConnected && !box.hidden) renderAsk(it, box, idx);
+  }catch(e){}
 }
 
 async function loadPrivate(it){
@@ -3452,7 +3487,10 @@ contentEl.addEventListener('click', ev=>{
     if(it && box){
       box.hidden = !box.hidden;
       if(!box.hidden && !it._faq) loadAsk(it, box, idx);
-      else if(!box.hidden) renderAsk(it, box, idx);
+      else if(!box.hidden){
+        renderAsk(it, box, idx);      // instant, from cache
+        revalidateAsk(it, box, idx);  // then quietly catch up
+      }
     }
     return;
   }
