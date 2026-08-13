@@ -118,6 +118,29 @@
     border-radius:99px;padding:6px 12px;cursor:pointer;
   }
   .chiprow button.scan-deals:hover{filter:brightness(1.15)}
+  /* ---- collapsible filter block ---- */
+  .filters{border:1.5px solid var(--line);border-radius:9px;margin:0 0 10px;background:var(--surface)}
+  .filters > summary{
+    display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;
+    padding:7px 11px;
+  }
+  .filters > summary::-webkit-details-marker{display:none}
+  .filters > summary::after{
+    content:'▾';margin-left:auto;color:var(--ink-soft);font-size:.8rem;transition:transform .15s;
+  }
+  .filters[open] > summary::after{transform:rotate(180deg)}
+  .filters .flabel{
+    flex:0 0 auto;
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.7rem;
+    text-transform:uppercase;letter-spacing:.05em;color:var(--sign-green);
+  }
+  .filters .fsum{
+    font-family:'IBM Plex Mono',monospace;font-size:.62rem;color:var(--ink-soft);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+  }
+  .filters[open] > summary{border-bottom:1px solid var(--line);margin-bottom:9px}
+  .filters > *:not(summary){margin-left:11px;margin-right:11px}
+  .filters > *:last-child{margin-bottom:9px}
   .filterrow{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px;align-items:center}
   .filterrow.states-chips{
     flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
@@ -1124,7 +1147,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v8.1</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v8.2</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -1287,6 +1310,8 @@ const state = {
   poiSearch: '',        // name filter within the current list
   poiOpenOnly: false,   // only places open right now
   poiSort: 'dist',      // 'dist' | 'rating'
+  filtersOpen: false,   // the filter block is collapsed until asked for
+
   tabGroup: 'now',      // active tab group
   favKeys: new Set(),   // normalized keys of saved places
   tab: 'weather',
@@ -2755,9 +2780,8 @@ function crossingRowHTML(crossings){
         ${on ? '✓ ' : ''}Skip bridge crossings</button>
       <span class="crossnote">${on ? '+' : ''}${crossings.length} in ${esc(where)}${on ? ' hidden' : ' shown'}</span>
     </div>
-    <div class="sec-note crossattr">Driving distances from the
-      <a href="https://project-osrm.org/" target="_blank" rel="noopener">OSRM</a> demo server ·
-      &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>`;
+    <div class="sec-note crossattr"><a href="https://project-osrm.org/" target="_blank" rel="noopener">OSRM</a> ·
+      &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>`;
 }
 
 function drawPOIs(kind){
@@ -2795,36 +2819,48 @@ function drawPOIs(kind){
   state.currentPOIs = items;
 
   const RADII = [[7000,'4 mi'],[16000,'10 mi'],[40000,'25 mi']];
-  let html = `
-    <div class="viewtoggle" role="group" aria-label="List or map view">
-      <button aria-pressed="true">List</button>
-      <button aria-pressed="false">Map</button>
-    </div>
-    <div class="filterrow radiusrow" role="group" aria-label="Search radius">
-      <span class="radlabel">Radius:</span>` +
-    RADII.map(([m,l])=>`<button data-r="${m}" aria-pressed="${state.radiusM===m}">${l}</button>`).join('') +
-    `</div>
-    <div class="poicontrols">
-      <input class="poi-search" placeholder="Filter by name" value="${esc(state.poiSearch)}" aria-label="Filter list by name">
-      <button class="opennow" aria-pressed="${state.poiOpenOnly}">Open now</button>
-    </div>
-    <div class="filterrow sortrow" role="group" aria-label="Sort">
-      <span class="radlabel">Sort:</span>
-      <button data-sort="dist" aria-pressed="${state.poiSort!=='rating'}">Nearest</button>
-      <button data-sort="rating" aria-pressed="${state.poiSort==='rating'}">Top rated</button>
-    </div>` + crossingRowHTML(crossings);
+  let catHTML = '';
   if(filterable){
     const counts = {};
     for(const i of all) counts[i.kind] = (counts[i.kind]||0)+1;
     const kinds = Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
     if(kinds.length > 1){
-      html += `<div class="filterrow" role="group" aria-label="Filter by category">
+      catHTML = `<div class="filterrow" role="group" aria-label="Filter by category">
         <button data-k="" aria-pressed="${!state.poiFilter}">All (${all.length})</button>` +
         kinds.map(k=>`<button data-k="${esc(k)}" aria-pressed="${state.poiFilter===k}">${esc(k)} (${counts[k]})</button>`).join('') +
         `</div>`;
     }
   }
-  html += `<div class="sec-note">${items.length} places within ~${(state.radiusM/1609).toFixed(0)} miles</div>`;
+  /* Collapsed, the summary has to say what is currently being applied — a
+     hidden filter that silently drops results is worse than no filter at all. */
+  const active = [ (RADII.find(([m])=>m===state.radiusM) || [,''])[1] ];
+  if(state.poiSort === 'rating') active.push('Top rated');
+  if(state.poiFilter) active.push(state.poiFilter);
+  if(state.poiSearch) active.push(`“${state.poiSearch}”`);
+  if(state.poiOpenOnly) active.push('Open now');
+  if(crossings.length && state.hideCrossings !== false) active.push('No bridges');
+
+  let html = `
+    <div class="viewtoggle" role="group" aria-label="List or map view">
+      <button aria-pressed="true">List</button>
+      <button aria-pressed="false">Map</button>
+    </div>
+    <details class="filters"${state.filtersOpen ? ' open' : ''}>
+      <summary><span class="flabel">Filters</span><span class="fsum">${esc(active.join(' · '))}</span></summary>
+      <div class="filterrow radiusrow" role="group" aria-label="Search radius">
+        <span class="radlabel">Radius:</span>` +
+      RADII.map(([m,l])=>`<button data-r="${m}" aria-pressed="${state.radiusM===m}">${l}</button>`).join('') +
+      `</div>
+      <div class="poicontrols">
+        <input class="poi-search" placeholder="Filter by name" value="${esc(state.poiSearch)}" aria-label="Filter list by name">
+        <button class="opennow" aria-pressed="${state.poiOpenOnly}">Open now</button>
+      </div>
+      <div class="filterrow sortrow" role="group" aria-label="Sort">
+        <span class="radlabel">Sort:</span>
+        <button data-sort="dist" aria-pressed="${state.poiSort!=='rating'}">Nearest</button>
+        <button data-sort="rating" aria-pressed="${state.poiSort==='rating'}">Top rated</button>
+      </div>` + crossingRowHTML(crossings) + catHTML + `</details>`;
+  html += `<div class="sec-note countnote">${items.length} places within ~${(state.radiusM/1609).toFixed(0)} miles</div>`;
   let idx = 0;
   for(const it of items){
     html += `
@@ -2864,7 +2900,7 @@ function drawPOIs(kind){
     });
   });
   if(!items.length && all.length){
-    contentEl.querySelector('.sec-note').insertAdjacentHTML('afterend',
+    contentEl.querySelector('.countnote').insertAdjacentHTML('afterend',
       `<div class="empty-state"><p>Nothing matches those filters.</p></div>`);
   }
   const sBox = contentEl.querySelector('.poi-search');
@@ -2886,6 +2922,10 @@ function drawPOIs(kind){
   });
   contentEl.querySelectorAll('.sortrow button').forEach(b=>
     b.addEventListener('click', ()=>{ state.poiSort = b.dataset.sort; drawPOIs(kind); }));
+  /* Every filter click redraws this whole block, so the open/closed state has
+     to live in state or the panel would snap shut on each choice. */
+  const fBox = contentEl.querySelector('details.filters');
+  if(fBox) fBox.addEventListener('toggle', ()=>{ state.filtersOpen = fBox.open; });
   contentEl.querySelectorAll('details.poi').forEach((d,i)=>{
     d.addEventListener('toggle', ()=>{
       if(d.open) enrichPOI(state.currentPOIs[i], document.getElementById('desc-'+i));
