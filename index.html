@@ -1124,7 +1124,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v8.0</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v8.1</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -2689,9 +2689,16 @@ function renderPOIs(items, kind){
    rather than of the shop: one route to Harlem covers every Harlem result. */
 const CROSSING_RATIO = 2.0;
 
-// "700 W 125th St (at 12th Ave), New York, NY 10027" -> "New York, NY"
+/* "700 W 125th St (at 12th Ave), New York, NY 10027" -> "New York, NY"
+   The street part is optional: providers also return a bare "New York, NY
+   10027", and requiring a comma before the town silently matched nothing on
+   exactly the entries this feature exists to catch. */
 function localityOf(it){
-  const m = String(it.addr || '').match(/,\s*([^,]+),\s*([A-Z]{2})(?:\s+\d{5})?\s*$/);
+  const m = String(it.addr || '')
+    // Google appends the country, Foursquare doesn't
+    .replace(/,\s*(USA|United States|Canada)\.?\s*$/i, '')
+    // postal code is optional and may be Canadian ("ON M5V 2T6")
+    .match(/(?:^|,)\s*([^,]+),\s*([A-Z]{2})(?:\s+[A-Z0-9][A-Z0-9 -]{1,9})?\s*$/);
   return m ? `${m[1].trim()}, ${m[2]}` : '';
 }
 const crossingOf = it => (state.detour || {})[localityOf(it)];
