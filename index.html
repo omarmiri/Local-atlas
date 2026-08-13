@@ -1025,7 +1025,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.5</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.6</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -1512,7 +1512,10 @@ const acctState = { step: 'email', email: '', msg: '', bad: false, busy: false }
    be wiped by the open that was meant to display it. */
 function openAcct(msg, bad){
   acctState.step = state.user ? 'in' : 'email';
-  acctState.msg = msg || ''; acctState.bad = !!bad;
+  // only ever a string: anything else is a caller mistake, and rendering it
+  // stringified ("[object PointerEvent]") is worse than showing nothing
+  acctState.msg = typeof msg === 'string' ? msg : '';
+  acctState.bad = !!bad;
   $('acctSheet').hidden = false;
   renderAcct();
 }
@@ -4916,7 +4919,10 @@ $('headToggle').addEventListener('click', ()=>{
 });
 
 /* ---------------- account sheet wiring ---------------- */
-$('acctBtn').addEventListener('click', openAcct);
+/* Wrapped, not passed directly: openAcct's first parameter is a message to
+   display, and a listener hands it the click event — which is how a
+   PointerEvent ended up rendered in the sheet. */
+$('acctBtn').addEventListener('click', ()=> openAcct());
 $('acctSheet').addEventListener('click', ev=>{ if(ev.target === $('acctSheet')) closeAcct(); });
 document.addEventListener('keydown', ev=>{
   if(ev.key === 'Escape' && !$('acctSheet').hidden) closeAcct();
