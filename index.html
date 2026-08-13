@@ -1025,7 +1025,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.2</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.3</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -3192,6 +3192,74 @@ async function loadPrivate(it){
   }catch(e){ return []; }
 }
 
+/* ---------------- telling you the answer landed ----------------
+   A call takes 30-90 seconds. Nobody watches a spinner for that long, so by
+   the time the answer arrives the tab is usually in the background and the
+   phone is usually in a pocket. Three escalating signals, cheapest first:
+
+   1. the panel re-renders — the only one that matters if you stayed put;
+   2. the tab title flashes while a call is out, so a glance at the tab strip
+      tells you it is still running and then that it is done;
+   3. a system notification when the tab is hidden.
+
+   Permission is asked for at the moment a call is placed, never on load. A
+   permission prompt before the user has done anything is the reason most
+   people reflexively hit Block, and a blocked prompt cannot be re-asked.
+
+   The honest limit: all of this runs in the page. If the tab is closed — or
+   suspended, which mobile browsers do aggressively to background tabs — none
+   of it fires. Surviving that needs Web Push, which needs VAPID keys, a stored
+   subscription per user and a server-side send from the CALL-E webhook. The
+   webhook already lands the answer server-side, so it is buildable; it is just
+   a good deal more than this. */
+const canNotify = () => typeof Notification !== 'undefined';
+
+async function askNotifyPermission(){
+  if(!canNotify() || Notification.permission !== 'default') return;
+  try{ await Notification.requestPermission(); }catch(e){}
+}
+
+let _titleTimer = null, _titleWas = document.title;
+function flashTitle(text){
+  stopFlashTitle();
+  if(!text) return;
+  _titleWas = document.title;
+  let on = false;
+  _titleTimer = setInterval(()=>{ document.title = (on = !on) ? text : _titleWas; }, 1200);
+}
+function stopFlashTitle(){
+  if(_titleTimer){ clearInterval(_titleTimer); _titleTimer = null; document.title = _titleWas; }
+}
+// a click on the tab is as good as an acknowledgement
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) stopFlashTitle(); });
+
+/* Fired when a call finishes. Deliberately quiet when the tab is already
+   visible — the panel has just updated in front of them, and a system banner
+   for something they are looking at is noise. */
+function notifyAnswer(it, entry){
+  const label = entry.topic || entry.question || 'Your question';
+  const body = entry.answerStatus === 'answered'
+    ? (entry.answer || entry.evidenceQuote || 'They answered.')
+    : (ASK_FAIL[entry.answerStatus] || ASK_FAIL.unknown);
+
+  /* Watching it happen counts as being told. Stop the flash rather than just
+     returning, or the "Calling…" title runs forever for anyone who stayed on
+     the tab the whole time. */
+  if(!document.hidden) return stopFlashTitle();
+  flashTitle('✓ ' + label);
+  if(!canNotify() || Notification.permission !== 'granted') return;
+  try{
+    const n = new Notification(`${it.name} — ${label}`, {
+      body,
+      /* One notification per place+question. A recheck replaces the old
+         banner instead of stacking a second one. */
+      tag: 'atlas-ask-' + (entry.qHash || label),
+      icon: '/icon.svg', badge: '/icon.svg'
+    });
+    n.onclick = ()=>{ window.focus(); stopFlashTitle(); n.close(); };
+  }catch(e){}
+}
+
 /* One slot below the form carries both rejections and the unlock prompt; `calm`
    drops the red so asking for a code doesn't read as an error. */
 function askError(box, msg, offerCode, calm){
@@ -3250,6 +3318,11 @@ async function submitAsk(it, box, idx, payload){
     return renderAsk(it, box, idx);
   }
   if(!j.callId){ if(btn) btn.disabled = false; return askError(box, j.error || 'The call could not be started.'); }
+  /* Asked here rather than on load: the user has just chosen to place a call,
+     which is the one moment where "may we tell you when this is done?" is an
+     obviously reasonable question. Not awaited — a pending permission dialog
+     must not delay the waiting state. */
+  askNotifyPermission();
   waitForAnswer(it, box, idx, j.callId, payload.question || payload._label || '');
 }
 
@@ -3270,9 +3343,11 @@ function waitForAnswer(it, box, idx, callId, label){
     `<div class="ask-live"><div class="spinner"></div><span>Calling ${esc(it.name)} now…${label ? ' ' + esc(label) : ''}</span></div>`);
   clearTimeout(it._askTimer);
   const started = Date.now();
+  flashTitle('☎ Calling ' + it.name + '…');
 
   const tick = async ()=>{
-    if(!box.isConnected) return;                         // list re-rendered under us
+    // list re-rendered under us — nothing left to update, so stop announcing it
+    if(!box.isConnected) return stopFlashTitle();
     try{
       /* Signed-in headers on the poll too: a private result is refused to
          anyone who cannot prove they own it, including the tab that started it. */
@@ -3281,10 +3356,12 @@ function waitForAnswer(it, box, idx, callId, label){
       const j = await r.json().catch(()=>({}));
       if(j.state === 'done' && j.entry){
         absorbEntry(it, j.entry);
-        return renderAsk(it, box, idx);
+        renderAsk(it, box, idx);
+        return notifyAnswer(it, j.entry);
       }
     }catch(e){}
     if(Date.now() - started > 180000){                   // give up, don't spin forever
+      stopFlashTitle();
       renderAsk(it, box, idx);
       return askError(box, 'The call is taking longer than expected. Reopen this panel shortly to see the answer.');
     }
