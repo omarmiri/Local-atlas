@@ -397,17 +397,63 @@ async function moderateQuestion(question, place){
    "I don't know" as a real answer. The guardrails matter more than coverage —
    this dials real small businesses who did not opt in.
 
-   OPENER is defined once and used by the script, the simulator, and the
-   confirmation preview. If the preview showed a different disclosure from the
-   one the agent actually reads out, the confirmation would be a lie. */
-/* Says who is really on the line and why, in that order. The AI disclosure
-   stays first: everything after it is context, and context is not consent.
-   Naming the customer as the reason for the call is also the honest framing —
-   a person did ask this, which is what makes the interruption reasonable. */
-/* Kept short on purpose. The first live calls showed this taking ~16 seconds
-   to deliver, during which the person who answered could not get a word in —
-   long enough that their own greeting was steamrolled and the transcript
-   recorded "Amboy" as "Envoy". Every clause here has to earn its airtime. */
+   The opener is built in one place and used by the script, the simulator, and
+   the confirmation preview. If the preview showed a different line from the one
+   the agent actually reads out, the confirmation would be a lie. */
+/* ---- what to call the place ----
+   "One quick question about your listing" is website vocabulary. Nobody who
+   answers a phone thinks of their playground as a listing, and it quietly tells
+   them the call is about a directory entry rather than about them.
+
+   The provider `kind` is close to what we want and cannot be used raw. Live
+   values from one town include "arts and entertainment", "event service" and
+   "psychic and astrologer" — "your psychic and astrologer" is worse than
+   "your listing". So it is mapped, first match wins.
+
+   Everything unrecognised falls through to "your place", which is the quiet
+   win here: it is warm, it fits a playground and a psychic equally, and it is
+   never wrong. That makes the table below an enrichment rather than a
+   dependency — it exists only to say "your playground" instead of "your place"
+   where we are confident, and any row whose answer was already "place" has
+   been deleted, because the fallback said it better. Note also that nothing
+   maps to "business": a municipal playground is not one, and the fallback
+   covers the shops without having to make that claim. */
+const PLACE_NOUNS = [
+  [/playground/i,                                   'playground'],
+  /* "amusement park" is a park; an "amusement center" is a shed full of
+     arcade machines, and falls through to "place" as it should. */
+  [/amusement\s*park|water\s*park|theme\s*park|fairground/i, 'park'],
+  [/\bpark\b|garden|trail|beach|nature|preserve/i,  'park'],
+  [/museum|gallery|exhibit/i,                       'museum'],
+  [/library/i,                                      'library'],
+  [/theat|cinema|movie|concert|music venue|comedy/i,'theater'],
+  [/arcade/i,                                       'arcade'],
+  [/stadium|arena|rink|ballpark/i,                  'venue'],
+  [/gym|fitness|yoga|pilates|swim|pool/i,           'gym'],
+  [/cafe|coffee|bakery|deli|pizz|diner|grill|bistro|restaurant|eatery|food/i, 'restaurant'],
+  [/\bbar\b|pub|brewery|taproom|lounge/i,           'bar'],
+  [/hotel|motel|inn\b|lodge|resort/i,               'hotel'],
+  [/salon|spa|barber|nail/i,                        'salon'],
+  [/clinic|dental|dentist|medical|doctor|veterinar|\bvet\b|hospital/i, 'clinic'],
+  [/school|college|university|academy/i,            'school'],
+  [/shop|store|market|boutique|mall|grocer|retail|pharmac/i, 'shop']
+];
+
+/* `kind` is matched alone first, and the name is only consulted when the
+   provider gave us no kind at all. Matching both together got "Park Wayne
+   Diner" called a park, because the word is in its name — and a name is a
+   proper noun, not a description. Only when there is nothing else to go on is
+   guessing from it better than falling straight through to "business". */
+function placeNoun(place){
+  const kind = String((place && place.kind) || '').trim();
+  const hay = kind || String((place && place.name) || '');
+  const hit = hay && PLACE_NOUNS.find(([re]) => re.test(hay));
+  return hit ? hit[1] : 'place';
+}
+
+const openerFor = place =>
+  `Hi — is now a good moment for one quick question about your ${placeNoun(place)}?`;
+
 /* ---- the opening, in two turns ----
    It used to be one block: "Hi, I'm an AI assistant calling for a customer who
    found you on Local Atlas and can't make this call themselves. One quick
@@ -423,7 +469,6 @@ async function moderateQuestion(question, place){
    once they have agreed to talk, and it always precedes the question. What
    changes is the order, not whether it happens. A shorter first line also means
    far less of their greeting gets trampled. */
-const OPENER = `Hi — is now a good moment for one quick question about your listing?`;
 /* Two facts, and only two: it is AI, and a real person asked it to call. Both
    are load-bearing — "AI assistant" alone sounds like a cold-call bot, and
    "calling for someone" alone is what a human secretary says. Everything else
@@ -455,7 +500,7 @@ function buildTask({ place, question, phone }){
        every business answers by announcing itself, so the greeting is the
        normal case, not an edge case. */
     `1. When they pick up, they will almost certainly announce the business first — something like "Good morning, ${place.name}, how can I help you?". Let them finish that greeting before you say a single word. Do not start speaking the moment the line connects.`,
-    `2. Your first words are exactly this, and nothing more: "${OPENER}". Do not introduce yourself yet. Do not explain who you are calling for. Say that one line and then stop and wait for their reply.`,
+    `2. Your first words are exactly this, and nothing more: "${openerFor(place)}". Do not introduce yourself yet. Do not explain who you are calling for. Say that one line and then stop and wait for their reply.`,
     `3. Before you have asked your question: if they say it is a bad moment or ask you to call back, thank them, say you will try another time, and end the call. Do not push.`,
     /* The disclosure is unconditional and always precedes the question. It moved
        after the "is now a good moment" line because leading with it read as
@@ -568,7 +613,7 @@ async function simulate({ place, question, outcome }){
     'Nobody is dialled; this is test data used to build a UI.',
     '',
     `Business: ${place.name}${place.kind ? ` (${place.kind})` : ''}${place.addr ? `, ${place.addr}` : ''}`,
-    `The AI agent opens with exactly: "${OPENER}"`,
+    `The AI agent opens with exactly: "${openerFor(place)}"`,
     `The agent then asks exactly one question: "${question}"`,
     `How the call goes: ${SIM_SHAPE[outcome] || SIM_SHAPE.answered}`,
     '',
@@ -624,7 +669,7 @@ function simFallback({ place, question, outcome }){
 
   const turns = [
     { offset_seconds: 0,  speaker: 'user', text: `${name}, how can I help you?` },
-    { offset_seconds: 3,  speaker: 'bot',  text: OPENER },
+    { offset_seconds: 3,  speaker: 'bot',  text: openerFor(place) },
     { offset_seconds: 13, speaker: 'user', text: 'Sure, go ahead.' },
     { offset_seconds: 15, speaker: 'bot',  text: question }
   ];
@@ -775,7 +820,7 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
      costs nothing. */
   if(live && !confirmed)
     return { status: 428, needsConfirm: true, preview: {
-      question: v.question, opener: OPENER, disclosure: DISCLOSURE, phone,
+      question: v.question, opener: openerFor(place), disclosure: DISCLOSURE, phone,
       placeName: place.name, callerIdentity: CALLER_ID
     } };
 
@@ -1230,7 +1275,7 @@ module.exports = {
   placeKey, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
   realCallOk, templatesFor, moderateQuestion, suggestQuestions, listGoals, goalStatus,
   listCalls, publicEntry, summarizeCall,
-  simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA, OPENER, DISCLOSURE,
+  simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA, openerFor, placeNoun, DISCLOSURE,
   info: () => ({
     configured: configured(), dryRun: DRY_RUN, webhook: !!webhookUrl(),
     /* Whether a real call is possible *at all* on this deploy — needs both a
