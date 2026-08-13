@@ -60,7 +60,9 @@
   .panel{
     position:fixed;z-index:1000;
     top:16px;left:16px;bottom:16px;
-    width:min(400px,calc(100vw - 32px));
+    /* --panel-w is set by the drag handle and remembered; the min() keeps a
+       width dragged out on a big screen from overflowing a small one */
+    width:min(var(--panel-w,400px),calc(100vw - 32px));
     display:flex;flex-direction:column;
     background:var(--paper);
     border-radius:var(--radius);
@@ -961,6 +963,91 @@
     outline:3px solid var(--sun);outline-offset:2px;
   }
 
+  /* ---- centre-screen call state ---- */
+  .call-overlay{
+    position:fixed;inset:0;z-index:1400;display:flex;
+    align-items:center;justify-content:center;padding:20px;
+    /* never in the way: the map and the panel stay usable while a call runs,
+       and only the card itself takes clicks (to dismiss) */
+    pointer-events:none;
+  }
+  .call-overlay[hidden]{display:none}
+  .call-card{
+    pointer-events:auto;cursor:pointer;text-align:center;
+    background:var(--paper);border:1.5px solid var(--line);border-radius:20px;
+    box-shadow:var(--shadow);padding:26px 30px 22px;min-width:236px;max-width:min(340px,90vw);
+    animation:callIn .22s ease-out;
+  }
+  @keyframes callIn{from{opacity:0;transform:translateY(10px) scale(.96)}to{opacity:1;transform:none}}
+  .call-overlay.leaving .call-card{animation:callOut .3s ease-in forwards}
+  @keyframes callOut{to{opacity:0;transform:translateY(-6px) scale(.97)}}
+  .call-ico{
+    width:78px;height:78px;margin:0 auto 14px;position:relative;
+    display:flex;align-items:center;justify-content:center;color:var(--sign-green);
+  }
+  .call-ico svg{width:100%;height:100%;stroke-width:1.5}
+  /* the halo is a sibling ring rather than a box-shadow so it can outlive the
+     phone when the icon swaps to the tick */
+  .call-ico::after{
+    content:'';position:absolute;inset:-10px;border-radius:50%;
+    border:2px solid var(--sign-green);opacity:0;
+  }
+  .call-overlay.ringing .call-ico svg{animation:callRing 1.6s ease-in-out infinite}
+  .call-overlay.ringing .call-ico::after{animation:callHalo 1.6s ease-out infinite}
+  @keyframes callRing{
+    0%,55%,100%{transform:rotate(0) scale(1)}
+    6%{transform:rotate(-13deg) scale(1.05)}
+    12%{transform:rotate(11deg) scale(1.05)}
+    18%{transform:rotate(-9deg)}
+    24%{transform:rotate(9deg)}
+    30%{transform:rotate(-5deg)}
+    36%{transform:rotate(0)}
+  }
+  @keyframes callHalo{
+    0%{opacity:.5;transform:scale(.85)}
+    70%{opacity:0;transform:scale(1.25)}
+    100%{opacity:0}
+  }
+  .call-overlay.done .call-ico{color:var(--sign-green);animation:callPop .34s cubic-bezier(.2,1.5,.4,1)}
+  @keyframes callPop{from{transform:scale(.5);opacity:0}to{transform:scale(1);opacity:1}}
+  .call-overlay.failed .call-ico{color:var(--ink-soft)}
+  .call-txt{
+    font-family:'Overpass',sans-serif;font-weight:800;font-size:.98rem;
+    line-height:1.3;color:var(--ink);
+  }
+  .call-sub{
+    font-family:'IBM Plex Mono',monospace;font-size:.62rem;line-height:1.6;
+    color:var(--ink-soft);margin-top:6px;
+  }
+  @media (prefers-reduced-motion:reduce){
+    .call-card,.call-overlay.ringing .call-ico svg,
+    .call-overlay.ringing .call-ico::after,.call-overlay.done .call-ico{animation:none}
+    .call-overlay.ringing .call-ico::after{opacity:.35}
+  }
+
+  /* ---- desktop: drag the panel wider ----
+     Sits on the panel's outer edge rather than inside it. Inside, it would
+     land on top of .content's scrollbar and make the scrollbar awkward to
+     grab — so it is fixed to the same geometry the panel is built from and
+     straddles the border, mostly out over the map. */
+  .panel-resize{
+    position:fixed;z-index:1001;top:16px;bottom:16px;width:12px;
+    left:calc(16px + min(var(--panel-w,400px),100vw - 32px) - 5px);
+    cursor:col-resize;touch-action:none;
+  }
+  /* a hairline that only shows on hover — a permanent divider would read as a
+     second border on a panel that already has one */
+  .panel-resize::after{
+    content:'';position:absolute;top:0;bottom:0;left:4px;width:3px;border-radius:3px;
+    background:var(--sign-green);opacity:0;transition:opacity .15s;
+  }
+  .panel-resize:hover::after,.panel-resize:focus-visible::after,
+  body.panel-resizing .panel-resize::after{opacity:.55}
+  /* nothing to resize when the panel is slid away */
+  body.panel-away .panel-resize{display:none}
+  body.panel-resizing{cursor:col-resize;user-select:none}
+  body.panel-resizing .panel{transition:none}
+
   /* mobile: bottom sheet */
   @media (max-width:640px){
     #map{bottom:var(--sheet-h,50vh)}        /* split screen: map above, panel below */
@@ -995,6 +1082,7 @@
     .grip-dbg{position:absolute;right:10px;top:4px;font-size:.6rem;color:rgba(255,255,255,.6);font-family:monospace}
     .hint-chip{top:12px;right:12px;left:12px;text-align:center}
   }
+  @media (max-width:640px){ .panel-resize{display:none} }   /* the sheet drags by height */
   @media (min-width:641px){ .sheet-grip{display:none} }
 </style>
 </head>
@@ -1025,7 +1113,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.7</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.8</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -1134,6 +1222,25 @@
      signed-out and signed-in. -->
 <div class="acct-sheet" id="acctSheet" hidden role="dialog" aria-modal="true" aria-label="Account">
   <div class="acct-inner" id="acctInner"></div>
+</div>
+
+<!-- Centre-screen call state. A phone call is the one thing this app does that
+     happens somewhere else and takes a minute, so it gets the middle of the
+     screen rather than a line inside a panel that may be scrolled away or
+     closed. Announced politely: aria-live, not a dialog, because it never
+     takes focus and never blocks anything. -->
+<!-- Outside the panel on purpose — inside, it would sit on the content's
+     scrollbar. See .panel-resize. -->
+<div class="panel-resize" id="panelResize" role="separator" aria-orientation="vertical"
+     tabindex="0" aria-label="Drag to resize the panel, or use the arrow keys"
+     title="Drag to resize · double-click to reset"></div>
+
+<div class="call-overlay" id="callOverlay" hidden role="status" aria-live="polite">
+  <div class="call-card" id="callCard">
+    <div class="call-ico" id="callIco"></div>
+    <div class="call-txt" id="callTxt"></div>
+    <div class="call-sub" id="callSub"></div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -3183,7 +3290,7 @@ function renderConfirm(it, box, idx, ask, preview){
   it._pendingAsk = ask;
   const panel = box.querySelector('.ask-card-body') || box.querySelector('.ask-panel');
   if(!panel) return;
-  clearLiveNote(box);   // the preview replaces the "placing…" state, not joins it
+  clearLiveNote(box); hideCallOverlay();   // the preview replaces the "placing…" state
   panel.querySelectorAll('.ask-form, .ask-chips, .priv-form').forEach(n=>{ n.hidden = true; });
   panel.insertAdjacentHTML('beforeend', `
     <div class="ask-confirm">
@@ -3337,9 +3444,56 @@ function notifyAnswer(it, entry){
   }catch(e){}
 }
 
+/* ---------------- centre-screen call state ----------------
+   The inline line inside the panel is easy to miss and easy to scroll away
+   from, and a call is the one thing this app does that happens elsewhere and
+   takes a minute. So it also gets the middle of the screen: a ringing phone
+   while the call is out, a tick when the answer lands, then it leaves.
+
+   It never blocks anything — the overlay is pointer-events:none and only the
+   card takes clicks, to dismiss. Nothing about the call depends on it. */
+let _callFade = null;
+function callOverlay(){ return $('callOverlay'); }
+
+function showCallOverlay(text, sub){
+  const el = callOverlay();
+  if(!el) return;
+  clearTimeout(_callFade); _callFade = null;
+  $('callIco').innerHTML = ICON.phone;
+  $('callTxt').textContent = text;
+  $('callSub').textContent = sub || '';
+  el.className = 'call-overlay ringing';
+  el.hidden = false;
+}
+
+/* `ok` false still shows the answer arriving — a call that reached voicemail
+   is a finished call, and pretending otherwise leaves the phone ringing on
+   screen forever. It just doesn't get the celebratory tick. */
+function finishCallOverlay(text, sub, ok){
+  const el = callOverlay();
+  if(!el || el.hidden) return;
+  clearTimeout(_callFade);
+  $('callIco').innerHTML = ok ? ICON.check : ICON.phone;
+  $('callTxt').textContent = text;
+  $('callSub').textContent = sub || '';
+  el.className = 'call-overlay ' + (ok ? 'done' : 'failed');
+  _callFade = setTimeout(()=> hideCallOverlay(), 5000);
+}
+
+function hideCallOverlay(){
+  const el = callOverlay();
+  if(!el || el.hidden) return;
+  clearTimeout(_callFade);
+  el.classList.add('leaving');
+  /* Same handle as the auto-fade, so a call started during the exit animation
+     cancels this rather than being hidden 300ms after it appears. */
+  _callFade = setTimeout(()=>{ el.hidden = true; el.className = 'call-overlay'; }, 300);
+}
+
 /* One live line per panel, reused by the "placing…" state and the "calling…"
    wait, so the two can never stack up on top of each other. */
-function liveNote(box, text){
+function liveNote(box, text, sub){
+  showCallOverlay(text, sub);
   const panel = box.querySelector('.ask-card-body') || box.querySelector('.ask-panel');
   if(!panel) return;
   clearLiveNote(box);
@@ -3353,6 +3507,7 @@ const clearLiveNote = box => box.querySelectorAll('.ask-live').forEach(n=>n.remo
 function askError(box, msg, offerCode, calm){
   // an error ends whatever was in progress, so nothing should still be spinning
   clearLiveNote(box);
+  hideCallOverlay();
   const el = box.querySelector('.ask-err');
   if(!el) return;
   el.hidden = false;
@@ -3393,7 +3548,7 @@ async function submitAsk(it, box, idx, payload){
      create against CALL-E, which is seconds even when it goes well — and a
      dead button for those seconds is how someone concludes it didn't work and
      clicks again. */
-  liveNote(box, 'Placing the call…');
+  liveNote(box, 'Placing the call…', it.name);
 
   let j = {};
   try{
@@ -3468,14 +3623,14 @@ function absorbEntry(it, entry){
 /* A phone call takes 30-90 s. The wait is shown, not hidden — a silent minute
    reads as a hung page, and the call is the thing worth watching. */
 function waitForAnswer(it, box, idx, callId, label){
-  liveNote(box, `Calling ${it.name} now…${label ? ' ' + label : ''}`);
+  liveNote(box, `Calling ${it.name} now…`, label);
   clearTimeout(it._askTimer);
   const started = Date.now();
   flashTitle('☎ Calling ' + it.name + '…');
 
   const tick = async ()=>{
     // list re-rendered under us — nothing left to update, so stop announcing it
-    if(!box.isConnected) return stopFlashTitle();
+    if(!box.isConnected){ hideCallOverlay(); return stopFlashTitle(); }
     try{
       /* Signed-in headers on the poll too: a private result is refused to
          anyone who cannot prove they own it, including the tab that started it. */
@@ -3485,6 +3640,9 @@ function waitForAnswer(it, box, idx, callId, label){
       if(j.state === 'done' && j.entry){
         absorbEntry(it, j.entry);
         renderAsk(it, box, idx);
+        const ok = j.entry.answerStatus === 'answered';
+        finishCallOverlay(ok ? 'Answer received' : 'Call finished',
+          j.entry.topic || j.entry.question || '', ok);
         return notifyAnswer(it, j.entry);
       }
     }catch(e){}
@@ -4970,6 +5128,10 @@ $('headToggle').addEventListener('click', ()=>{
   $('headToggle').title = mini ? 'Show search' : 'Hide search';
 });
 
+// the card is the only clickable part of the overlay, and clicking it means
+// "yes, seen" — the call itself carries on regardless
+$('callCard').addEventListener('click', hideCallOverlay);
+
 /* ---------------- account sheet wiring ---------------- */
 /* Wrapped, not passed directly: openAcct's first parameter is a message to
    display, and a listener hands it the click event — which is how a
@@ -5059,6 +5221,85 @@ $('acctInner').addEventListener('change', async ev=>{
   cb.closest('label').dataset.on = cb.checked ? 1 : 0;
   await savePrefs(boxes.filter(b=>!b.checked).map(b=>b.dataset.tab));
 });
+
+/* ---------------- desktop: drag the panel wider ----------------
+   400px was chosen for a map that happens to have a panel on it. Once the
+   panel carries verified facts, quotes and a private-call form, that is
+   cramped — and how much of the screen the map deserves is a preference, not
+   something this app should decide for someone with a wide monitor.
+
+   Width lives in a CSS variable rather than an inline style so the stylesheet
+   keeps the final say: `min(var(--panel-w), 100vw - 32px)` means a width
+   dragged out on a large display cannot overflow a small one later. Mobile is
+   untouched — the sheet resizes by height, and its handle is a different
+   gesture on a different edge. */
+(function initPanelResize(){
+  const grip = $('panelResize'), panel = $('panel');
+  if(!grip || !panel) return;
+  const MIN = 320, KEY = 'atlasPanelW';
+  const cap = () => Math.max(MIN, Math.min(900, window.innerWidth - 120));
+  const apply = w => document.documentElement.style.setProperty('--panel-w', w + 'px');
+  const save  = w => { try{ localStorage.setItem(KEY, String(w)); }catch(e){} };
+
+  try{
+    const saved = parseInt(localStorage.getItem(KEY) || '', 10);
+    if(saved >= MIN) apply(Math.min(saved, cap()));
+  }catch(e){}
+
+  let startX = 0, startW = 0, dragging = false;
+  const onMove = ev => {
+    if(!dragging) return;
+    ev.preventDefault();
+    const w = Math.max(MIN, Math.min(cap(), startW + (ev.clientX - startX)));
+    apply(w);
+  };
+  const onUp = () => {
+    if(!dragging) return;
+    dragging = false;
+    document.body.classList.remove('panel-resizing');
+    save(panel.getBoundingClientRect().width | 0);
+    // the map only knows its container changed if we tell it
+    setTimeout(()=>{ try{ map.invalidateSize(); }catch(e){} }, 0);
+  };
+  grip.addEventListener('pointerdown', ev=>{
+    dragging = true;
+    startX = ev.clientX;
+    startW = panel.getBoundingClientRect().width;
+    document.body.classList.add('panel-resizing');
+    grip.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  });
+  grip.addEventListener('pointermove', onMove);
+  grip.addEventListener('pointerup', onUp);
+  grip.addEventListener('pointercancel', onUp);
+  // double-click resets, which is the discoverable way back from a bad drag
+  grip.addEventListener('dblclick', ()=>{
+    document.documentElement.style.removeProperty('--panel-w');
+    try{ localStorage.removeItem(KEY); }catch(e){}
+    setTimeout(()=>{ try{ map.invalidateSize(); }catch(e){} }, 0);
+  });
+  // keyboard: a separator that can only be dragged is unusable without a mouse
+  grip.addEventListener('keydown', ev=>{
+    const step = ev.shiftKey ? 50 : 16;
+    let w = panel.getBoundingClientRect().width;
+    if(ev.key === 'ArrowLeft')       w -= step;
+    else if(ev.key === 'ArrowRight') w += step;
+    else if(ev.key === 'Home')       w = 400;
+    else return;
+    ev.preventDefault();
+    w = Math.max(MIN, Math.min(cap(), Math.round(w)));
+    apply(w); save(w);
+    try{ map.invalidateSize(); }catch(e){}
+  });
+  /* A window narrowed after a wide drag would otherwise keep a --panel-w the
+     screen can no longer honour; the CSS min() hides it, but the stored value
+     should follow the screen it will next be applied on. */
+  window.addEventListener('resize', ()=>{
+    const w = parseInt(getComputedStyle(document.documentElement)
+      .getPropertyValue('--panel-w'), 10);
+    if(w > cap()) apply(cap());
+  });
+})();
 
 /* ---------------- mobile sheet toggle ---------------- */
 (function initSheetDrag(){
