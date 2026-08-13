@@ -467,8 +467,16 @@ const openerFor = place =>
    So: ask first, in one short line, then say what you are. The disclosure is
    not conditional and is not deferred until asked — it is the first thing said
    once they have agreed to talk, and it always precedes the question. What
-   changes is the order, not whether it happens. A shorter first line also means
-   far less of their greeting gets trampled. */
+   changes is the order, not whether it happens.
+
+   Verified on a live call. Be precise about what it fixed: the agent STILL
+   speaks the instant the line connects — rule 1 remains ignored, and that is a
+   platform behaviour, not a wording problem. What changed is the blast radius.
+   Against the old 16-second opener the callee's greeting came back as "Envoy
+   inclusive playground"; against this one it came back whole, and the agent
+   then held its turn and waited, which is rule 2 working even while rule 1
+   does not. Shortening the first line did not stop the collision. It made the
+   collision cost nothing. */
 /* Two facts, and only two: it is AI, and a real person asked it to call. Both
    are load-bearing — "AI assistant" alone sounds like a cold-call bot, and
    "calling for someone" alone is what a human secretary says. Everything else
