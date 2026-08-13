@@ -1025,7 +1025,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.4</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.5</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -1227,6 +1227,41 @@ const saveSession = s => {
    #error=access_denied&error_code=otp_expired — and are worth as much as the
    successes. Landing on a page that silently looks signed-out is how "the link
    didn't work" becomes a guess instead of a message. */
+/* ---- coming back where you left ----
+   Signing in costs a full page navigation to Google and back, and everything
+   about where you were is in the URL fragment — the place lives there as
+   #p=lat,lon,cc,name — with the open tab not in the URL at all. Supabase then
+   returns its session in that same fragment, so ours cannot ride along: it
+   would be overwritten, and it cannot go in redirect_to's query either without
+   widening what the allow-list has to permit.
+
+   So it is stashed here before leaving and put back after the token is
+   consumed. Short-lived on purpose: this is "resume what you were doing",
+   which is meaningless an hour later, and an emailed link may well be opened
+   somewhere else entirely. */
+const AUTH_RETURN_KEY = 'atlasAuthReturn';
+function rememberReturn(){
+  try{
+    localStorage.setItem(AUTH_RETURN_KEY, JSON.stringify({
+      hash: location.hash || '', tab: state.tab || '', at: Date.now()
+    }));
+  }catch(e){}
+}
+function restoreReturn(){
+  let r = null;
+  try{
+    r = JSON.parse(localStorage.getItem(AUTH_RETURN_KEY) || 'null');
+    localStorage.removeItem(AUTH_RETURN_KEY);
+  }catch(e){}
+  if(!r || Date.now() - r.at > 30 * 60e3) return;
+  /* The tab is applied to state rather than selected now — nothing is rendered
+     yet, and loadPlace ends by selecting state.tab. The tab *group* needs no
+     help: applyTabGroup writes a cookie, so it survives the round trip already. */
+  if(r.tab) state.tab = r.tab;
+  // put the place back in the address bar before boot's parseHash reads it
+  if(r.hash) history.replaceState(null, '', location.pathname + location.search + r.hash);
+}
+
 let authHashError = '';
 (function consumeAuthHash(){
   const raw = String(location.hash || '');
@@ -1245,6 +1280,8 @@ let authHashError = '';
       .replace(/\+/g, ' ');
   }
   history.replaceState(null, '', location.pathname + location.search);
+  // also on the failure path: a dud link should still leave you where you were
+  restoreReturn();
 })();
 
 async function supaPost(path, body){
@@ -1273,7 +1310,7 @@ const asSession = j => ({
    template contains: include {{ .Token }} in it and this is a 6-digit code,
    leave it as the default link and the user lands back here with tokens in the
    URL fragment — handled in initAuth. Both paths end in the same session. */
-const sendOtp = email => supaPost(
+const sendOtp = email => (rememberReturn(), supaPost(
   /* Ask to come back to wherever this page is actually served from. Without
      it Supabase falls back to the project's Site URL, which defaults to
      http://localhost:3000 — so a link mailed from the deployed app points at a
@@ -1281,7 +1318,7 @@ const sendOtp = email => supaPost(
      under Authentication → URL Configuration; this only stops the app from
      silently requesting the wrong one. */
   '/auth/v1/otp?redirect_to=' + encodeURIComponent(location.origin + location.pathname),
-  { email, create_user: true });
+  { email, create_user: true }));
 
 /* ---- Google ----
    A full page navigation, not a popup: popups get blocked, and the session
@@ -1291,6 +1328,7 @@ const sendOtp = email => supaPost(
 function signInWithGoogle(){
   const a = state.auth;
   if(!a) return;
+  rememberReturn();      // the fragment is about to be spent on a session
   location.assign(a.url + '/auth/v1/authorize?provider=google&redirect_to=' +
     encodeURIComponent(location.origin + location.pathname));
 }
