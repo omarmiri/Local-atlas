@@ -474,6 +474,17 @@
     text-transform:uppercase;border-radius:99px;padding:0 12px;cursor:pointer;
   }
   .poicontrols .opennow[aria-pressed="true"]{background:var(--sign-green);color:#fff}
+  /* ---- across-a-bridge filter ---- */
+  .crossrow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:2px}
+  .crossbtn{
+    border:1.5px solid var(--sign-green);background:var(--surface);color:var(--sign-green);
+    font-family:'Overpass',sans-serif;font-weight:700;font-size:.72rem;
+    border-radius:99px;padding:5px 12px;cursor:pointer;white-space:nowrap;
+  }
+  .crossbtn[aria-pressed="true"]{background:var(--sign-green);color:#fff}
+  .crossnote{font-family:'IBM Plex Mono',monospace;font-size:.62rem;color:var(--ink-soft)}
+  .crossattr{margin:5px 0 10px;font-size:.62rem;font-family:'IBM Plex Mono',monospace}
+  .crossattr a{color:var(--ink-soft);text-decoration:underline}
   .chiprow button{
     font-family:'Overpass',sans-serif;font-weight:700;font-size:.74rem;
     border-radius:99px;padding:6px 12px;cursor:pointer;
@@ -1113,7 +1124,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.9</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v8.0</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -2663,7 +2674,85 @@ function poiDetailHTML(it, idx){
 function renderPOIs(items, kind){
   state.allPOIs = items;
   drawPOIs(kind);
+  // routed in the background; the list redraws itself if anything is flagged
+  loadDetours(items);
 }
+/* ---------------- crossings ----------------
+   A radius search draws a circle and a circle knows nothing about water. From
+   Edgewater NJ a four-mile circle is mostly Manhattan — 57 New York entries to
+   3 New Jersey ones on the Kids tab, every one of them a bridge and a toll
+   away. What marks them out is not the state line (Monroe MI to Toledo OH is a
+   state line and an ordinary drive) but that the road refuses to go the way the
+   crow flies. See /api/detour in server.js for the measurements.
+
+   Grouped by town before asking, because the answer is a property of the town
+   rather than of the shop: one route to Harlem covers every Harlem result. */
+const CROSSING_RATIO = 2.0;
+
+// "700 W 125th St (at 12th Ave), New York, NY 10027" -> "New York, NY"
+function localityOf(it){
+  const m = String(it.addr || '').match(/,\s*([^,]+),\s*([A-Z]{2})(?:\s+\d{5})?\s*$/);
+  return m ? `${m[1].trim()}, ${m[2]}` : '';
+}
+const crossingOf = it => (state.detour || {})[localityOf(it)];
+const isCrossing = it => {
+  const d = crossingOf(it);
+  return !!d && d.ratio >= CROSSING_RATIO;
+};
+
+async function loadDetours(items){
+  const place = state.place;
+  if(!place || !items || !items.length) return;
+  const groups = new Map();
+  for(const it of items){
+    const loc = localityOf(it);
+    if(!loc || (state.detour && state.detour[loc])) continue;
+    const g = groups.get(loc) || { key: loc, lat: 0, lon: 0, n: 0 };
+    g.lat += it.lat; g.lon += it.lon; g.n++;
+    groups.set(loc, g);
+  }
+  if(!groups.size) return;
+  /* Busiest towns first: the request is capped and deadlined server-side, so
+     if only some come back they should be the ones covering the most results. */
+  const points = [...groups.values()].sort((a,b)=>b.n-a.n).slice(0, 12)
+    .map(g=>({ key: g.key, lat: g.lat/g.n, lon: g.lon/g.n }));
+
+  const token = state.reqToken;
+  try{
+    const r = await fetchT('/api/detour', { method:'POST',
+      headers:{'content-type':'application/json'},
+      body: JSON.stringify({ origin:{ lat: place.lat, lon: place.lon }, points }) }, 12000);
+    if(!r.ok) return;
+    const j = await r.json();
+    if(token !== state.reqToken) return;          // place changed under us
+    state.detour = { ...(state.detour||{}), ...(j.items||{}) };
+    state.detourNote = j.attribution || '';
+    if(POI_TABS.includes(state.tab)) drawPOIs(state.tab);
+  }catch(e){}
+}
+
+/* Appears only when something is actually across a barrier, so the towns where
+   this never happens never see it. Names the places rather than the rule —
+   "across a bridge or tunnel" is the fact; "detour ratio 3.8" is our reasoning
+   and nobody's business. */
+function crossingRowHTML(crossings){
+  if(!crossings || !crossings.length) return '';
+  const towns = [...new Set(crossings.map(localityOf))]
+    .map(t=>t.replace(/,\s*[A-Z]{2}$/, ''));
+  const where = towns.length <= 2 ? towns.join(' and ')
+              : `${towns[0]} and ${towns.length - 1} other places`;
+  const on = state.hideCrossings !== false;
+  return `<div class="filterrow crossrow" role="group" aria-label="Places across a bridge or tunnel">
+      <button class="crossbtn" aria-pressed="${on}"
+        title="Reaching these means a bridge or a tunnel — the drive is far longer than the map suggests">
+        ${on ? '✓ ' : ''}Skip bridge crossings</button>
+      <span class="crossnote">${on ? '+' : ''}${crossings.length} in ${esc(where)}${on ? ' hidden' : ' shown'}</span>
+    </div>
+    <div class="sec-note crossattr">Driving distances from the
+      <a href="https://project-osrm.org/" target="_blank" rel="noopener">OSRM</a> demo server ·
+      &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors</div>`;
+}
+
 function drawPOIs(kind){
   poiLayer.clearLayers();
   const all = state.allPOIs || [];
@@ -2684,6 +2773,12 @@ function drawPOIs(kind){
   }
   if(state.poiOpenOnly)
     items = items.filter(i=> i.openNow === true || isOpenNow(i.hours) === true);
+  /* Hidden by default, but only ever counted against what survived the other
+     filters — a chip offering "+57 across a bridge" has to mean 57 things you
+     would otherwise be looking at right now. */
+  const crossings = items.filter(isCrossing);
+  if(crossings.length && state.hideCrossings !== false)
+    items = items.filter(i=>!isCrossing(i));
   /* The test listing exists to be found and called. Sorted honestly by distance
      it lands 27th of 49 — a town centroid is typically miles from any one place,
      so distance buries it among identical pins. Hoisting it isn't promotion:
@@ -2710,7 +2805,7 @@ function drawPOIs(kind){
       <span class="radlabel">Sort:</span>
       <button data-sort="dist" aria-pressed="${state.poiSort!=='rating'}">Nearest</button>
       <button data-sort="rating" aria-pressed="${state.poiSort==='rating'}">Top rated</button>
-    </div>`;
+    </div>` + crossingRowHTML(crossings);
   if(filterable){
     const counts = {};
     for(const i of all) counts[i.kind] = (counts[i.kind]||0)+1;
@@ -2777,6 +2872,11 @@ function drawPOIs(kind){
   });
   const onB = contentEl.querySelector('.opennow');
   if(onB) onB.addEventListener('click', ()=>{ state.poiOpenOnly = !state.poiOpenOnly; drawPOIs(kind); });
+  const xB = contentEl.querySelector('.crossbtn');
+  if(xB) xB.addEventListener('click', ()=>{
+    state.hideCrossings = state.hideCrossings === false;   // default is hide
+    drawPOIs(kind);
+  });
   contentEl.querySelectorAll('.sortrow button').forEach(b=>
     b.addEventListener('click', ()=>{ state.poiSort = b.dataset.sort; drawPOIs(kind); }));
   contentEl.querySelectorAll('details.poi').forEach((d,i)=>{

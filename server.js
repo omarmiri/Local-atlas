@@ -1251,6 +1251,92 @@ app.get('/api/layer-test', async (req, res) => {
   res.json(out);
 });
 
+/* ---- detour: telling "two miles away" from "two miles away across a river" ----
+   A radius search draws a circle, and a circle does not know about water. From
+   Edgewater NJ a four-mile circle is mostly Manhattan: the Kids tab came back
+   57 New York entries to 3 New Jersey ones, all of them a bridge and a toll
+   away. Filtering by state was the obvious fix and the wrong one — Monroe MI
+   to Toledo OH and Cherry Hill NJ to Philadelphia are both cross-state and
+   both perfectly normal drives.
+
+   What separates them is whether the road goes the way the crow flies. Measured
+   against the POIs that actually appear in that Edgewater search:
+
+     across the Hudson   ratio 2.45 – 5.02   (+3.7 to +6.3 miles)
+     same side           ratio 1.26 – 1.86   (+1.1 to +2.1 miles)
+     Monroe -> Toledo    ratio 1.13
+     Cherry Hill -> Philly ratio 1.11
+
+   Nothing overlaps, so the threshold sits in the gap. Note this only holds at
+   the radii where the problem bites: over a longer trip a bridge amortises
+   away, which is why Oakland to San Francisco is 1.38 and will not be flagged.
+
+   Routed one town at a time rather than one POI at a time — the client groups
+   results by locality and sends centroids — so a busy search costs eight or so
+   requests, and then none, because road networks do not move and these cache
+   for a month. */
+const OSRM = (process.env.ROUTING_URL || 'https://router.project-osrm.org').replace(/\/$/, '');
+const DETOUR_TTL = 30 * 86400e3;
+
+/* The demo server is a courtesy, not a product: no SLA, no key, and a request
+   rate we are asked to keep sane. One at a time, one per second, everything
+   cached hard, and a deadline so a slow upstream degrades to "no chip" rather
+   than to a hung panel. */
+let osrmChain = Promise.resolve();
+const osrmQueue = fn => (osrmChain = osrmChain.then(
+  () => new Promise(r => setTimeout(r, 1000)).then(fn, fn)));
+
+const miles = (a, b, c, d) => {
+  const R = 3958.8, t = x => x * Math.PI / 180;
+  const h = Math.sin(t(c - a) / 2) ** 2 +
+            Math.cos(t(a)) * Math.cos(t(c)) * Math.sin(t(d - b) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+// ~0.01 deg is about half a mile: precise enough to route, coarse enough that
+// two visitors to the same town share a cache entry
+const cell = n => (Math.round(n * 100) / 100).toFixed(2);
+
+async function driveMiles(oLat, oLon, pLat, pLon){
+  const key = `detour:${cell(oLat)},${cell(oLon)}:${cell(pLat)},${cell(pLon)}`;
+  return cached(key, DETOUR_TTL, () => osrmQueue(async () => {
+    const url = `${OSRM}/route/v1/driving/${oLon},${oLat};${pLon},${pLat}?overview=false&alternatives=false`;
+    const r = await withDeadline(fetch(url), 6000, 'OSRM');
+    if(!r.ok) throw new Error('OSRM HTTP ' + r.status);
+    const j = await r.json();
+    const m = j?.routes?.[0]?.distance;
+    if(!Number.isFinite(m)) throw new Error('OSRM returned no route');
+    return m / 1609.34;
+  }));
+}
+
+app.post('/api/detour', express.json({ limit: '8kb' }), async (req, res) => {
+  try{
+    const { origin, points } = req.body || {};
+    if(!origin || !Number.isFinite(+origin.lat) || !Number.isFinite(+origin.lon))
+      return res.status(400).json({ error: 'origin {lat, lon} required' });
+    const list = (Array.isArray(points) ? points : []).slice(0, 12)
+      .filter(p => p && p.key && Number.isFinite(+p.lat) && Number.isFinite(+p.lon));
+
+    /* Whole-request deadline. The client asks for every town it found and
+       applies whatever comes back — a partial answer filters the towns it
+       covers and leaves the rest visible, which is the safe direction to
+       fail. */
+    const until = Date.now() + 9000;
+    const out = {};
+    for(const p of list){
+      if(Date.now() > until) break;
+      const crow = miles(+origin.lat, +origin.lon, +p.lat, +p.lon);
+      if(crow < 0.3){ out[p.key] = { crow, drive: crow, ratio: 1 }; continue; }
+      try{
+        const drive = await driveMiles(+origin.lat, +origin.lon, +p.lat, +p.lon);
+        out[p.key] = { crow: +crow.toFixed(2), drive: +drive.toFixed(2),
+                       ratio: +(drive / crow).toFixed(2) };
+      }catch(e){ /* unroutable or upstream down — that town stays unflagged */ }
+    }
+    res.json({ items: out, attribution: 'OSRM · © OpenStreetMap contributors' });
+  }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
+});
+
 /* ---- CALL-E: "Ask the Place" first-party FAQs ----
    Thin wiring only; the call script, guardrails, budget and storage live in
    calle.js. Calls are async: ask-place returns a call id, the answer lands
