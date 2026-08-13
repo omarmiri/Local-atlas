@@ -1025,7 +1025,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.6</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v7.7</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -3183,6 +3183,7 @@ function renderConfirm(it, box, idx, ask, preview){
   it._pendingAsk = ask;
   const panel = box.querySelector('.ask-card-body') || box.querySelector('.ask-panel');
   if(!panel) return;
+  clearLiveNote(box);   // the preview replaces the "placing…" state, not joins it
   panel.querySelectorAll('.ask-form, .ask-chips, .priv-form').forEach(n=>{ n.hidden = true; });
   panel.insertAdjacentHTML('beforeend', `
     <div class="ask-confirm">
@@ -3336,9 +3337,22 @@ function notifyAnswer(it, entry){
   }catch(e){}
 }
 
+/* One live line per panel, reused by the "placing…" state and the "calling…"
+   wait, so the two can never stack up on top of each other. */
+function liveNote(box, text){
+  const panel = box.querySelector('.ask-card-body') || box.querySelector('.ask-panel');
+  if(!panel) return;
+  clearLiveNote(box);
+  panel.insertAdjacentHTML('beforeend',
+    `<div class="ask-live"><div class="spinner"></div><span>${esc(text)}</span></div>`);
+}
+const clearLiveNote = box => box.querySelectorAll('.ask-live').forEach(n=>n.remove());
+
 /* One slot below the form carries both rejections and the unlock prompt; `calm`
    drops the red so asking for a code doesn't read as an error. */
 function askError(box, msg, offerCode, calm){
+  // an error ends whatever was in progress, so nothing should still be spinning
+  clearLiveNote(box);
   const el = box.querySelector('.ask-err');
   if(!el) return;
   el.hidden = false;
@@ -3353,6 +3367,20 @@ function askError(box, msg, offerCode, calm){
   if(f) f.focus();
 }
 
+/* Re-issues a request whose response we lost, purely to learn what became of
+   it. Safe to fire blind: every branch of askPlace that could dial is guarded
+   by a per-account dedupe lock and a stable Idempotency-Key, so the worst case
+   is that the call had not started and this one starts it — which is what was
+   asked for. The wait lets the original finish writing its lock first. */
+async function recoverCall(it, ask){
+  await new Promise(r=>setTimeout(r, 2500));
+  try{
+    const r = await fetchT('/api/ask-place', { method:'POST', headers: await askHeaders(),
+      body: JSON.stringify({ place: askPlaceBody(it), ...ask }) }, 30000);
+    return await r.json().catch(()=>null);
+  }catch(e){ return null; }
+}
+
 async function submitAsk(it, box, idx, payload){
   const form = box.querySelector('.priv-form') || box.querySelector('.ask-form');
   const btn = form && form.querySelector('button');
@@ -3361,10 +3389,21 @@ async function submitAsk(it, box, idx, payload){
   if(err){ err.hidden = true; err.textContent = ''; }
 
   const { _label, ...ask } = payload;
+  /* Say something immediately. Confirming a call runs moderation and then a
+     create against CALL-E, which is seconds even when it goes well — and a
+     dead button for those seconds is how someone concludes it didn't work and
+     clicks again. */
+  liveNote(box, 'Placing the call…');
+
   let j = {};
   try{
+    /* 25s was too tight for the confirmed leg. It is the slowest request this
+       app makes — Gemini moderation, then a provider create — and when the
+       client gave up first the server carried on and dialled anyway, leaving a
+       real call in flight with nobody holding its id: no spinner, no polling,
+       no notification, and an error message next to a ringing phone. */
     const r = await fetchT('/api/ask-place', { method:'POST', headers: await askHeaders(),
-      body: JSON.stringify({ place: askPlaceBody(it), ...ask }) }, 25000);
+      body: JSON.stringify({ place: askPlaceBody(it), ...ask }) }, ask.confirmed ? 60000 : 25000);
     j = await r.json().catch(()=>({}));
     if(btn) btn.disabled = false;
     // the server will not dial until it has been told the preview was seen
@@ -3385,6 +3424,21 @@ async function submitAsk(it, box, idx, payload){
         (j.code ? ` [${j.code}]` : ''));
   }catch(e){
     if(btn) btn.disabled = false;
+    /* This is the case that produced an error message next to a ringing phone.
+       The request died in flight; the server may well have finished dialling.
+       Ask again with the identical body — askPlace's dedupe lock hands back the
+       in-flight callId, and if that lock is not written yet, the shared
+       Idempotency-Key makes CALL-E replay the same call rather than place a
+       second one. Nobody gets rung twice either way, and we get the id back. */
+    const rec = await recoverCall(it, ask);
+    if(rec && rec.callId){
+      askNotifyPermission();
+      return waitForAnswer(it, box, idx, rec.callId, payload.question || payload._label || '');
+    }
+    if(rec && rec.reused && rec.entry){
+      absorbEntry(it, rec.entry);
+      return renderAsk(it, box, idx);
+    }
     return askError(box, 'Could not reach the server. Try again in a moment.');
   }
 
@@ -3414,9 +3468,7 @@ function absorbEntry(it, entry){
 /* A phone call takes 30-90 s. The wait is shown, not hidden — a silent minute
    reads as a hung page, and the call is the thing worth watching. */
 function waitForAnswer(it, box, idx, callId, label){
-  const panel = box.querySelector('.ask-card-body') || box.querySelector('.ask-panel');
-  if(panel) panel.insertAdjacentHTML('beforeend',
-    `<div class="ask-live"><div class="spinner"></div><span>Calling ${esc(it.name)} now…${label ? ' ' + esc(label) : ''}</span></div>`);
+  liveNote(box, `Calling ${it.name} now…${label ? ' ' + label : ''}`);
   clearTimeout(it._askTimer);
   const started = Date.now();
   flashTitle('☎ Calling ' + it.name + '…');
