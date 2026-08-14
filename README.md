@@ -579,3 +579,8 @@ To exercise Ask the Place without a CALL-E key, set `CALLE_DRY_RUN=1`.
   thin in others.
 - **Quirky Laws / tax summaries** are AI-generated folklore/general info, clearly labeled, not
   legal or tax advice.
+
+## License
+
+[MIT](LICENSE). The data this app displays is not covered by it — each provider carries its own
+terms and required attribution, which the UI shows where the data appears.
