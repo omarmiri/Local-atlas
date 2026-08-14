@@ -38,6 +38,30 @@ const SUPA_ANON = env('SUPABASE_ANON_KEY', 'SUPABASE-ANON-KEY');
 
 const configured = () => !!SUPA_URL && !!SUPA_ANON;
 
+/* ---- review mode ----
+   Requesting a call needs an account, which makes the whole feature
+   unreachable on a machine with no Supabase project — someone reviewing this
+   repository sees the map and the already-collected facts and never the thing
+   worth reviewing. REVIEW_MODE=1 attaches a fixed local reviewer instead.
+
+   Note what it is NOT gated on. CALLE_DRY_RUN looks like the safety flag and
+   is not one: `live` is `!!CALLE_KEY && realCallOk(accessCode)`, which never
+   consults it, so a deploy with a key and the access code dials real numbers
+   with dry-run set. The condition that actually cannot dial is the absence of
+   a key, so that is the one used here.
+
+   All three must hold, and any real deployment fails at least two of them:
+   accounts configured, or a CALL-E key present, and the flag is off by
+   default. */
+const REVIEW_MODE = env('REVIEW_MODE') === '1'
+  && !configured()
+  && !env('CALLE_API_KEY', 'CALL-E-API-KEY');
+const REVIEW_USER = { id: 'review-mode-local', email: 'reviewer@localhost' };
+if(env('REVIEW_MODE') === '1' && !REVIEW_MODE)
+  console.warn('REVIEW_MODE ignored: it only applies with no Supabase project and no CALL-E API key.');
+else if(REVIEW_MODE)
+  console.warn('REVIEW_MODE on: call requests run as a local reviewer. Every call is simulated.');
+
 const DAY = 86400e3;
 const prefsKey = uid => 'atlas:prefs:' + uid;
 const tokKey = t => 'auth:tok:' + crypto.createHash('sha256').update(t).digest('hex').slice(0, 32);
@@ -93,6 +117,7 @@ async function attachUser(req, res, next){
    to, and a demo box without the env vars should say so. */
 function requireUser(req, res, next){
   if(req.user) return next();
+  if(REVIEW_MODE){ req.user = REVIEW_USER; return next(); }
   if(!configured())
     return res.status(503).json({ error: 'Accounts are not configured on this server.', code: 'auth_unconfigured' });
   return res.status(401).json({ error: 'Sign in to request a call.', code: 'auth_required' });
@@ -132,5 +157,8 @@ module.exports = {
   /* Public config only — the anon key belongs in the browser by design. There
      is no service-role key anywhere in this app, and nothing here should ever
      become the place one gets added. */
-  info: () => ({ configured: configured(), url: SUPA_URL, anonKey: SUPA_ANON })
+  /* reviewMode is reported so the client can stop asking a reviewer to sign in
+     to an identity provider this deploy does not have. */
+  info: () => ({ configured: configured(), url: SUPA_URL, anonKey: SUPA_ANON,
+                 reviewMode: REVIEW_MODE })
 };

@@ -204,7 +204,11 @@ happens, and keeping it longer is storing somebody's errand for no one's benefit
 ## Simulation
 
 `CALLE_DRY_RUN=1` exercises the entire flow — validation, moderation, confirmation, storage,
-polling, the panel — without dialling. Simulated calls are free, harmless, and open to everyone;
+polling, the panel — on a server with no CALL-E key. Note precisely what it does: it makes the
+feature *configured* without a credential. It is **not** the switch that prevents dialling, and
+it does not consult `live`. The condition that cannot dial is the absence of `CALLE_API_KEY`,
+since `live` is `!!CALLE_KEY && realCallOk(accessCode)` — a deploy holding a key and the access
+code places real calls with dry-run set. Simulated calls are free, harmless, and open to everyone;
 they are how the feature is normally demonstrated. The whole call is generated up front and
 revealed after `CALLE_SIM_DURATION_MS` (18s), because generating at poll time would race two
 in-flight polls into two different transcripts for one call. `CALLE_SIM_OUTCOME` pins the result
@@ -243,7 +247,8 @@ export — `process.env.X` dot-access can never reach it.
 | `CALLE_API_KEY` | — | CALL-E credential. Absent ⇒ the feature is unconfigured and the app boots normally without it. |
 | `REAL_CALL_ACCESS_CODE` | — | Unlocks real calls. **Unset ⇒ every call is simulated.** (`CALLE_ACCESS_CODE` still honoured for existing deploys.) |
 | `CALLE_WEBHOOK_TOKEN` | generated | Makes the callback URL unguessable. |
-| `CALLE_DRY_RUN` | `0` | `1` runs the whole flow without dialling. |
+| `CALLE_DRY_RUN` | `0` | `1` runs the whole flow with no CALL-E key present. Not a no-dial switch — see [Simulation](#simulation). |
+| `REVIEW_MODE` | `0` | `1` runs call requests as a fixed local reviewer, so the feature is reachable with no identity provider. Applies **only** when Supabase is unconfigured *and* no `CALLE_API_KEY` is set, so it is inert on any real deployment and cannot reach a live call. |
 | `CALLE_DAILY_CALL_BUDGET` | `25` | Hard ceiling on calls per day. |
 | `CALLE_FAQ_TTL_DAYS` | `90` | Lifetime of a shared verified fact. |
 | `CALLE_PRIVATE_TTL_DAYS` | `30` | Lifetime of a private result. |
@@ -561,7 +566,13 @@ The frontend needs the backend for `/api/*`, so run the server:
 then open the printed URL. Geolocation requires http(s) + user permission; if denied, the app
 falls back to approximate IP location only when you press the ⌖ button.
 
-To exercise Ask the Place without a CALL-E key, set `CALLE_DRY_RUN=1`.
+To exercise Ask the Place on a machine with no credentials at all:
+
+    REVIEW_MODE=1 CALLE_DRY_RUN=1 npm start
+
+`CALLE_DRY_RUN=1` makes the feature configured without a CALL-E key, and `REVIEW_MODE=1`
+runs call requests as a fixed local reviewer so the account gate does not block a
+walkthrough. Both are inert on a deploy that has Supabase or a CALL-E key.
 
 ## Known constraints (by design, not bugs)
 
