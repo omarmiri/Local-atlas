@@ -1147,7 +1147,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v8.3</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v8.4</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -5010,10 +5010,41 @@ $('geoBtn').addEventListener('click', async ()=>{
     const rp = await reversePlace(loc.lat, loc.lon);
     loadPlace({ lat:loc.lat, lon:loc.lon, name:rp.name, country:rp.country });
     if(!precise) msg('Using approximate location from your network — search a ZIP for an exact spot.');
+    // they've allowed it, so the next first-load may ask on its own again
+    else storeSet('geo-declined', false);
   }catch(e){
     msg('Couldn’t determine your location — search by ZIP or city instead.', true);
   }
 });
+
+/* ---------------- first load: start where you are ----------------
+   Runs only when there is nothing to restore — a shared link or a saved last
+   place is a deliberate choice and outranks wherever the device happens to
+   be. The browser owns the accept/deny prompt; all we decide is whether to
+   raise it. A denial is remembered so the next visit doesn't ask again, and
+   it is not quietly worked around with the IP lookup sitting behind the ⌖
+   button: that fallback is for someone who asked for it. */
+async function locateOnLoad(){
+  if(!navigator.geolocation || !window.isSecureContext) return;
+  if(await storeGet('geo-declined')) return;
+  try{
+    const st = await navigator.permissions?.query({ name:'geolocation' });
+    if(st && st.state === 'denied') return;      // re-asking would only fail silently
+  }catch(e){}                                    // the Permissions API is optional
+  msg('Finding your location — allow it in your browser, or search below.');
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    if(state.place) return;                      // they searched while the prompt sat there
+    const { latitude:lat, longitude:lon } = pos.coords;
+    const rp = await reversePlace(lat, lon);
+    if(state.place) return;
+    msg('');
+    loadPlace({ lat, lon, name:rp.name, country:rp.country });
+  }, err=>{
+    if(err.code === 1) storeSet('geo-declined', true);            // PERMISSION_DENIED
+    // a refusal needs no commentary; the search box is right there
+    msg(err.code === 1 ? '' : 'Couldn’t get your location — search by ZIP or city instead.');
+  }, { enableHighAccuracy:false, timeout:10000, maximumAge:600000 });
+}
 
 /* ---------------- map overlay layers ---------------- */
 const overlayLayers = {};      // name -> live Leaflet layer
@@ -5580,6 +5611,8 @@ if('serviceWorker' in navigator && location.protocol === 'https:'){
     if(!last.country) last.country = 'US';
     loadPlace(last, { fly:false });
     map.setView([last.lat, last.lon], 12);
+  }else{
+    locateOnLoad();              // nothing to restore — ask the browser where we are
   }
 })();
 </script>
