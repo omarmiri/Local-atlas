@@ -11,7 +11,9 @@ services:
         sync: false
       # CALL-E "Ask the Place". CALLE_WEBHOOK_TOKEN is any long random string:
       # webhook deliveries are unsigned, so it is what makes the callback URL
-      # unguessable. Set CALLE_DRY_RUN=1 to exercise the flow without dialling.
+      # unguessable. CALLE_DRY_RUN=1 exercises the whole flow and places no
+      # call — it overrides the key and the access code, and blocks every
+      # credentialed request, so it is safe to set on a deploy that has both.
       - key: CALLE_API_KEY
         sync: false
       - key: CALLE_WEBHOOK_TOKEN

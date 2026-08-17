@@ -16,7 +16,7 @@ turns the answer into a dated, first-party fact the next visitor gets for free.
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v8.4**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.1**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ---
@@ -204,15 +204,71 @@ happens, and keeping it longer is storing somebody's errand for no one's benefit
 ## Simulation
 
 `CALLE_DRY_RUN=1` exercises the entire flow — validation, moderation, confirmation, storage,
-polling, the panel — on a server with no CALL-E key. Note precisely what it does: it makes the
-feature *configured* without a credential. It is **not** the switch that prevents dialling, and
-it does not consult `live`. The condition that cannot dial is the absence of `CALLE_API_KEY`,
-since `live` is `!!CALLE_KEY && realCallOk(accessCode)` — a deploy holding a key and the access
-code places real calls with dry-run set. Simulated calls are free, harmless, and open to everyone;
-they are how the feature is normally demonstrated. The whole call is generated up front and
-revealed after `CALLE_SIM_DURATION_MS` (18s), because generating at poll time would race two
-in-flight polls into two different transcripts for one call. `CALLE_SIM_OUTCOME` pins the result
-for a scripted demo.
+polling, the panel — and places no call. It is a hard switch, not a hint, and it is enforced in
+two places rather than one:
+
+- **the decision**: `live` is `realCallsPossible() && realCallOk(accessCode)`, and dry run is the
+  first term of `realCallsPossible()`, so a deploy holding both a key *and* the access code still
+  simulates;
+- **the transport**: `client()` — the single chokepoint every authenticated request goes through —
+  refuses to construct the SDK client at all. Dry mode makes no credentialed request of any kind,
+  not just no call.
+
+`/api/health` reports `calle.realCalls: false` in dry mode and `POST /api/ask-access` rejects even
+a correct code, so nothing in the UI offers an unlock that would not be honoured.
+
+The feature is still *configured* without a credential, which is the point: the simulated pipeline
+is the walkthrough, and simulated calls are free, harmless and open to everyone. The whole call is
+generated up front and revealed after `CALLE_SIM_DURATION_MS` (18s), because generating at poll time
+would race two in-flight polls into two different transcripts for one call. `CALLE_SIM_OUTCOME` pins
+the result for a scripted demo.
+
+## The credential origin is pinned
+
+`CALLE_BASE_URL` is an allowlist, not a URL field. The API key is a bearer credential, so the host
+it is sent to is part of the secret's blast radius — one mistyped or injected value would hand the
+key to whoever owns that name. Only the two origins CALL-E publishes are accepted:
+
+    https://api.heycall-e.com          (the SDK's own default)
+    https://test-api.heycall-e.com     (the staging mirror — note it still dials real phones)
+
+The check is an exact match on `URL.origin` — never a suffix test, which
+`https://api.heycall-e.com.example.com` would pass — and additionally requires `https`, no
+userinfo, no explicit port, no path, no query. Anything else is a **configuration error, not a
+fallback to the default**: silently dialling production because staging was misspelled is the kind
+of helpfulness that spends credits on the wrong account. The server warns at boot, reports
+`realCalls: false`, refuses to build the credentialed client, and answers `503` to an ask.
+
+## What makes a fact "verified"
+
+A published entry says *confirmed by phone*, so that claim is checked rather than assumed. Results
+arrive two ways — an unsigned webhook naming a call id, and our own poll — and in both cases the
+API record is a document *about* a call, not proof it was **our** call. `bindResult()` requires all
+six of these before anything is published, and any failure is a refusal:
+
+| Binding | What must hold |
+|---|---|
+| **call** | we have a stored request for this exact call id |
+| **terminal** | the call is in a terminal state, and CALL-E did not judge the task failed |
+| **task** | `sha256(call.task)` matches the script we sent — same disclosure, same single question |
+| **recipient** | the transcript is read from an attempt on the number *we* dialled, not `recipients[0]` |
+| **metadata** | `app`, `place_key`, `q_hash`, `question` and `visibility` all match our record |
+| **evidence** | an `answered` fact quotes something a staff member actually said |
+
+The evidence test compares the model's `evidence_quote` to the `user` turns of the transcript,
+case- and punctuation-insensitively; a quote binds if it is exactly one whole turn, or if it is a
+substring of at least 12 characters. Failures downgrade rather than invent:
+
+- `answered` with **no staff turn** ⇒ recorded as `unknown`. An answer with nobody answering is not
+  a fact about the place.
+- `answered` with a staff turn but an **ungrounded quote** ⇒ recorded as `unclear`, answer dropped.
+  The call happened and the asker is told so; it is not a verified fact.
+- **any other binding failure** ⇒ nothing is published, and the reason is logged. The asker sees a
+  finished call with no answer.
+
+The shared list has exactly one gate: `publish()` will not write to a place's public answers unless
+the result is marked bound. Losing an answer costs the asker a retry. Publishing an unbound one
+costs the claim every other entry on the page depends on.
 
 ## Webhooks are untrusted input
 
@@ -222,6 +278,10 @@ documented as legacy-only. So a POST to the webhook URL is treated as untrusted:
 storing anything. `CALLE_WEBHOOK_TOKEN` (any long random string, `generateValue: true` in
 `render.yaml`) is what makes the callback path unguessable, since that's the only protection
 available.
+
+An id we have no stored request for is dropped before the re-read, and the re-read record still has
+to pass every binding above — so a forged POST cannot publish anything, and no longer even costs us
+an authenticated GET.
 
 The SDK is ESM-only and `server.js` is CommonJS, so it's reached through a lazy dynamic `import()`
 — also lazy on purpose: a deploy without `CALLE_API_KEY` must still boot and serve the map.
@@ -233,8 +293,7 @@ The SDK is ESM-only and `server.js` is CommonJS, so it's reached through a lazy 
 | `POST /api/ask-place` | Ask a question. Returns `202` + call id, `428` + preview if unconfirmed, or `200` + a reused fact. Requires sign-in. |
 | `GET  /api/ask-place/:id` | Poll a call's state (webhook fallback). |
 | `POST /api/calle/webhook/:token` | Result callback. Takes the id, re-reads the record. |
-| `POST /api/calle/calls` | Direct call creation (debugging). |
-| `GET  /api/calle/goals`, `/api/calle/goal-status` | Inspect the optional Goals path. |
+| `POST /api/calle/calls` | Operator view of one place's stored calls, transcripts included. Behind the real-call code. |
 
 ## CALL-E configuration
 
@@ -247,15 +306,14 @@ export — `process.env.X` dot-access can never reach it.
 | `CALLE_API_KEY` | — | CALL-E credential. Absent ⇒ the feature is unconfigured and the app boots normally without it. |
 | `REAL_CALL_ACCESS_CODE` | — | Unlocks real calls. **Unset ⇒ every call is simulated.** (`CALLE_ACCESS_CODE` still honoured for existing deploys.) |
 | `CALLE_WEBHOOK_TOKEN` | generated | Makes the callback URL unguessable. |
-| `CALLE_DRY_RUN` | `0` | `1` runs the whole flow with no CALL-E key present. Not a no-dial switch — see [Simulation](#simulation). |
-| `REVIEW_MODE` | `0` | `1` runs call requests as a fixed local reviewer, so the feature is reachable with no identity provider. Applies **only** when Supabase is unconfigured *and* no `CALLE_API_KEY` is set, so it is inert on any real deployment and cannot reach a live call. |
+| `CALLE_DRY_RUN` | `0` | `1` runs the whole flow and places no call. A hard switch: it also blocks every credentialed request, and overrides a key and a correct access code. See [Simulation](#simulation). |
+| `REVIEW_MODE` | `0` | `1` runs call requests as a fixed local reviewer, so the feature is reachable with no identity provider. Applies **only** when Supabase is unconfigured *and* the server cannot dial (no `CALLE_API_KEY`, or `CALLE_DRY_RUN=1`), so it is inert on any real deployment. |
 | `CALLE_DAILY_CALL_BUDGET` | `25` | Hard ceiling on calls per day. |
 | `CALLE_FAQ_TTL_DAYS` | `90` | Lifetime of a shared verified fact. |
 | `CALLE_PRIVATE_TTL_DAYS` | `30` | Lifetime of a private result. |
 | `CALLE_CALLER_IDENTITY` | `Local Atlas, a local guide website` | What the agent says it's calling on behalf of. |
 | `CALLE_SIM_OUTCOME`, `CALLE_SIM_DURATION_MS` | —, `18000` | Pin a simulated outcome / its duration. |
-| `CALLE_GOAL_ID` | — | Optional: route live calls through a published Goal (see below). |
-| `CALLE_BASE_URL` | — | Point at staging. |
+| `CALLE_BASE_URL` | — | Must be an official CALL-E HTTPS origin; anything else disables live calls. See [pinned origin](#the-credential-origin-is-pinned). |
 | `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL` | Origin the webhook must be reachable on. |
 | `DEMO_PLACE_PHONE` + `DEMO_PLACE_*` | — | A test listing so demo calls dial a line you own instead of bothering a real business. See below. |
 
@@ -277,17 +335,15 @@ on a site real people use:
 Override `DEMO_PLACE_NAME`, `_LAT`, `_LON`, `_ADDR`, `_CATEGORY`, `_KIND` to place it wherever you
 are demoing from.
 
-### The Goals path (optional, experimental)
+### Why there is no Goals path
 
-`CALLE_GOAL_ID` routes live calls through a published Goal instead of the one-off Calls API. The
-only reason to want it is the voice: region, callee locale and runtime profile come from the
-published Goal, and there is no voice field on `CreateCallRequest` at all.
-
-It's a switch rather than a migration because the trade is real. `GoalRun` is
-`additionalProperties: false` over a fixed shape — **no transcript, no summary, no attempts**. So a
-Goal buys a fixed accent and costs the call log, and it moves the call script out of this repo and
-into a dashboard where it is neither reviewed nor version-controlled. The injection defence stays
-here either way: the question is sanitised, validated and model-moderated before anything is sent.
+An earlier version could route live calls through a published Goal (`CALLE_GOAL_ID`) for the sake of
+the voice, since region, callee locale and runtime profile come from the Goal and there is no voice
+field on `CreateCallRequest` at all. It was removed, because `GoalRun` is
+`additionalProperties: false` over a fixed shape with **no transcript, no summary and no attempts** —
+so a Goal result can never satisfy the evidence binding above. A code path whose only possible
+output is an unbound fact is not worth keeping for an accent, and a Goal also moves the call script
+out of this repo into a dashboard where it is neither reviewed nor version-controlled.
 
 ---
 
@@ -570,16 +626,22 @@ To exercise Ask the Place on a machine with no credentials at all:
 
     REVIEW_MODE=1 CALLE_DRY_RUN=1 npm start
 
-`CALLE_DRY_RUN=1` makes the feature configured without a CALL-E key, and `REVIEW_MODE=1`
-runs call requests as a fixed local reviewer so the account gate does not block a
-walkthrough. Both are inert on a deploy that has Supabase or a CALL-E key.
+`CALLE_DRY_RUN=1` makes the feature configured without a CALL-E key and guarantees no call is
+placed even if one is present, and `REVIEW_MODE=1` runs call requests as a fixed local reviewer so
+the account gate does not block a walkthrough. `REVIEW_MODE` is inert on a deploy with Supabase
+configured or one that can actually dial.
 
 ## Known constraints (by design, not bugs)
 
 - **Ask the Place needs a phone number.** Places with no listed number can't be called; the panel
   says so rather than offering a button that fails.
-- **Real calls are gated and budgeted.** No access code ⇒ simulated. Budget spent ⇒ refused until
-  tomorrow. Outside 10am–8pm Eastern, or the place is listed closed ⇒ refused.
+- **Real calls are gated and budgeted.** No access code ⇒ simulated. `CALLE_DRY_RUN=1` ⇒ simulated,
+  whatever else is set. Budget spent ⇒ refused until tomorrow. Outside 10am–8pm Eastern, or the
+  place is listed closed ⇒ refused.
+- **A result that cannot be bound to a request is dropped, not published.** See
+  [what makes a fact verified](#what-makes-a-fact-verified) — an answer with no staff turn behind it,
+  or a quote that appears nowhere in the transcript, never becomes a shared fact. The asker is still
+  told how their call went.
 - **Live webcams** are best-effort: Windy relays owner-run streams (often YouTube); some are
   offline or block embedding. The in-app player is sandboxed (no pop-outs), with a 10-second
   flakiness timeout that offers the always-works timelapse.
