@@ -16,7 +16,7 @@ turns the answer into a dated, first-party fact the next visitor gets for free.
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.1**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.2**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ---
@@ -201,6 +201,50 @@ Private results are kept for `CALLE_PRIVATE_TTL_DAYS` (30) against the public 90
 earns a long life by being reused; a private answer about one visit is spent the moment that visit
 happens, and keeping it longer is storing somebody's errand for no one's benefit.
 
+### Deleting an account
+
+`DELETE /api/auth/account` is the way out, exposed as **Delete account** in the account sheet
+behind a typed `delete` confirmation — a second "are you sure?" trains people to click through,
+typing does not.
+
+Each module deletes what it owns, and the reply reports counts rather than just `ok`:
+
+| Gone immediately | Where it lived |
+|---|---|
+| Tab preferences | `atlas:prefs:<uid>` |
+| The cached token — the **only** record here that ever held the email address | `auth:tok:<sha256(token)>` |
+| Every private call result, with its questions and transcripts | `calle:priv:<uid>:*` |
+| In-flight dedupe locks | `calle:lock:<uid>:*` |
+| Call records for that account | `calle:call:*`, filtered on the `uid` in the body |
+| The sign-in record itself | Supabase `auth.users` |
+
+The address is barely in this app: preferences are keyed by uid and hold only tab visibility, and
+the 60-second token cache is the one place `email` is ever written. Everything else is uid-keyed.
+
+**Public verified facts are kept, and that is not a loophole.** A shared entry carries no account
+id — none is stored on it and none is ever sent to CALL-E — so there is nothing in one that
+identifies who asked. The answer belongs to the place and to every later visitor; deleting it would
+remove other people's facts to no privacy end. The UI says this before asking for confirmation.
+
+Two implementation notes:
+
+- **No service-role key, still.** Deleting the `auth.users` row needs rights the anon key lacks,
+  and the obvious route — the admin API with a service-role key — would put a credential that can
+  rewrite every table into a web server so one button works. Instead the delete lives in the
+  database as a `SECURITY DEFINER` function, [`supabase/delete_own_account.sql`](supabase/delete_own_account.sql),
+  which the server calls with the **user's own token**. It takes no parameters: the target is
+  always `auth.uid()`, so no caller can reach anyone else's row, and Postgres enforces that rather
+  than this app remembering to check. **Run that SQL once in your Supabase project** — until you
+  do, the endpoint answers 502 saying the function is not installed.
+- **Order and honesty.** Our records go first, the identity row last. If Supabase refuses, the
+  reply is a 502 stating that the stored data is gone but the login remains. Reporting success over
+  a still-existing account is the one outcome here worse than an error.
+
+Finding `calle:priv:<uid>:*` needs key enumeration, which is why [`store.js`](store.js) grew
+`docScan` (Upstash `SCAN`, cursor-looped and bounded — never `KEYS`, which blocks Redis) alongside
+a real `docDel`. Every other read in that file is by exact key on purpose; this is the one caller
+that cannot be.
+
 ## Simulation
 
 `CALLE_DRY_RUN=1` exercises the entire flow — validation, moderation, confirmation, storage,
@@ -292,6 +336,7 @@ The SDK is ESM-only and `server.js` is CommonJS, so it's reached through a lazy 
 |---|---|
 | `POST /api/ask-place` | Ask a question. Returns `202` + call id, `428` + preview if unconfirmed, or `200` + a reused fact. Requires sign-in. |
 | `GET  /api/ask-place/:id` | Poll a call's state (webhook fallback). |
+| `DELETE /api/auth/account` | Delete the account and everything stored under it. See [Deleting an account](#deleting-an-account). |
 | `POST /api/calle/webhook/:token` | Result callback. Takes the id, re-reads the record. |
 | `POST /api/calle/calls` | Operator view of one place's stored calls, transcripts included. Behind the real-call code. |
 
@@ -435,6 +480,9 @@ without it, in a way that looks like a bug in this app and is not.
 6. The built-in SMTP sender allows only a couple of emails per hour — it is documented as
    development-only. Wire up **Project Settings → Authentication → SMTP Settings** before any
    event where more than one person signs up.
+7. **SQL Editor → New query** → paste [`supabase/delete_own_account.sql`](supabase/delete_own_account.sql)
+   and run it. This is what makes **Delete account** work without a service-role key; skip it and
+   that button answers 502. See [Deleting an account](#deleting-an-account).
 
 ## Deploy on Render (Node Web Service)
 
