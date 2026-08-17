@@ -679,6 +679,12 @@ placed even if one is present, and `REVIEW_MODE=1` runs call requests as a fixed
 the account gate does not block a walkthrough. `REVIEW_MODE` is inert on a deploy with Supabase
 configured or one that can actually dial.
 
+**If you signed up to try it, you can remove the account afterwards.** Account sheet →
+**Delete account**, type `delete`, and the sign-in record, the email address, the preferences and
+every private call result collected under it are gone immediately — testing this app should not
+leave you with an account you did not want. Public verified facts stay, because they never
+recorded who asked; see [Deleting an account](#deleting-an-account).
+
 ## Known constraints (by design, not bugs)
 
 - **Ask the Place needs a phone number.** Places with no listed number can't be called; the panel
