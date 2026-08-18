@@ -16,7 +16,7 @@ turns the answer into a dated, first-party fact the next visitor gets for free.
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.4**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.5**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ---

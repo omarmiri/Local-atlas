@@ -944,7 +944,11 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
   }
 
   const lock = await docGet(lockKey(pk, qh, isPrivate ? uid : ''));
-  if(lock) return { status: 202, callId: lock.callId, state: 'in_progress', deduped: true };
+  /* `round` rides along because a round holds this same lock for each of its
+     places: the caller is being handed a call id that will answer with a
+     comparison rather than a single entry, and it has to know that to poll it. */
+  if(lock) return { status: 202, callId: lock.callId, state: 'in_progress',
+                    deduped: true, ...(lock.round ? { round: true } : {}) };
 
   /* ---- the confirmation step ----
      A live call makes a stranger's phone ring, so it does not happen on one
@@ -1724,6 +1728,25 @@ async function askAround({ places, question, templateId, accessCode, confirmed, 
   if(lock) return { status: 202, callId: lock.callId, roundId: lock.roundId,
                     state: 'in_progress', deduped: true };
 
+  /* A round and a single ask are separately deduplicated, which left one line
+     able to ring twice for the same question: ask Rosa's privately, then start
+     a round that includes Rosa's, and the same number is dialled again minutes
+     later by the same person. The two paths share the per-place lock below so
+     that cannot happen — a place already being asked this question is dropped
+     from the round rather than dialled a second time. */
+  const busy = [];
+  for(const t of targets.slice()){
+    if(await docGet(lockKey(t.placeKey, qh, uid))){
+      busy.push(t);
+      targets.splice(targets.indexOf(t), 1);
+      dropped.push({ name: t.name, why: 'already being asked this' });
+    }
+  }
+  if(targets.length < ROUND_MIN)
+    return { status: 409, error: busy.length
+      ? `${busy.map(b => b.name).join(' and ')} ${busy.length > 1 ? 'are' : 'is'} already being asked this question. Wait for that to finish, or ask something else.`
+      : `A comparison needs at least ${ROUND_MIN} callable places.`, dropped };
+
   /* The confirmation carries every number that will ring, not just a count.
      "We'll call 3 nearby places" is not consent to ring three specific
      strangers; the names and the numbers are the thing being agreed to. */
@@ -1738,11 +1761,19 @@ async function askAround({ places, question, templateId, accessCode, confirmed, 
   if(!await reserveBudget(targets.length))
     return { error: `A round of ${targets.length} needs ${targets.length} of today's call budget, and there isn't that much left. Try again tomorrow.`, status: 429 };
 
-  const roundId = 'rnd_' + crypto.randomBytes(8).toString('hex');
+  /* Derived, not random, and this is load-bearing. CALL-E replays a call for a
+     repeated Idempotency-Key, and the round id is checked against the record's
+     metadata before anything is stored — so a random id would mean a replayed
+     call came back stamped with the *previous* round's id, failed to bind, and
+     recorded an empty round for a request that was perfectly legitimate. Same
+     inputs inside the same hour therefore derive the same id, which is exactly
+     the window in which the key is replayed. */
+  const bucket = Math.floor(Date.now() / 3600e3);
+  const roundId = 'rnd_' + sha256(`${uid}|${qh}|${sig}|${bucket}`).slice(0, 16);
   const noun = placeNoun(list[0]);
   const pending = {
     round: true, roundId, callId: '', uid, private: true,
-    question: v.question, qHash: qh,
+    question: v.question, qHash: qh, templateId: templateId || '',
     places: targets, sig, noun,
     createdAt: Date.now(), state: 'queued'
   };
@@ -1752,9 +1783,9 @@ async function askAround({ places, question, templateId, accessCode, confirmed, 
     pending.state = 'in_progress';
     pending.sim = await simulateRound({ targets, places: list, question: v.question, noun });
     await docSet(callKey(pending.callId), pending, DAY);
-    await docSet(roundLockKey(uid, qh, sig), { callId: pending.callId, roundId }, 10 * 60e3);
+    await holdRound(pending);
     return { status: 202, callId: pending.callId, roundId, state: 'in_progress',
-             simulated: true, recipients: targets.map(t => t.name) };
+             simulated: true, recipients: targets.map(t => t.name), dropped };
   }
 
   const c = await client();
@@ -1772,15 +1803,41 @@ async function askAround({ places, question, templateId, accessCode, confirmed, 
     metadata: { app: 'local-atlas', kind: 'round', round_id: roundId, q_hash: qh,
       question: v.question, visibility: 'private' },
     ...(webhookUrl() ? { webhookUrl: webhookUrl() } : {})
-  }, { idempotencyKey: `local-atlas:round:${uid}:${qh}:${sig}` });
+    /* Keyed on the derived round id, so the key and the id it stamps into the
+       metadata always move together. */
+  }, { idempotencyKey: 'local-atlas:' + roundId });
 
   pending.callId = call.id;
   pending.state = call.status;
   pending.taskHash = sha256(task);
   await docSet(callKey(call.id), pending, DAY);
-  await docSet(roundLockKey(uid, qh, sig), { callId: call.id, roundId }, 10 * 60e3);
+  await holdRound(pending);
+  /* `dropped` travels with the acceptance, not only with the confirmation.
+     A simulated round has no confirmation step, so this is the only chance to
+     say that the trio the button offered became a pair — and a round that
+     quietly asks fewer places than it promised is the kind of small dishonesty
+     the rest of this feature exists to avoid. */
   return { status: 202, callId: call.id, roundId, state: call.status,
-           recipients: targets.map(t => t.name) };
+           recipients: targets.map(t => t.name), dropped };
+}
+
+/* One round holds three locks' worth of ground: its own, so the same trio is
+   not asked twice, and each place's own, so a single ask for the same question
+   dedupes against it instead of dialling. `round: true` travels with the
+   per-place ones because askPlace hands the stored call id straight back to the
+   client, and a client that polls a round expecting one answer waits forever. */
+async function holdRound(pending){
+  await docSet(roundLockKey(pending.uid, pending.qHash, pending.sig),
+    { callId: pending.callId, roundId: pending.roundId }, 10 * 60e3);
+  for(const t of pending.places)
+    await docSet(lockKey(t.placeKey, pending.qHash, pending.uid),
+      { callId: pending.callId, round: true }, 10 * 60e3);
+}
+
+async function releaseRound(pending){
+  await docSet(roundLockKey(pending.uid, pending.qHash, pending.sig), null, 1000);
+  for(const t of pending.places)
+    await docSet(lockKey(t.placeKey, pending.qHash, pending.uid), null, 1000);
 }
 
 /* ---- turning a finished round into records ----
@@ -1827,7 +1884,7 @@ async function ingestRound(call){
       callId: `${call.id}:${results.length}`, placeKey: place.placeKey, qHash: pending.qHash,
       question: pending.question, placeName: place.name, phone: place.phone,
       private: true, uid: pending.uid,
-      roundId: pending.roundId
+      roundId: pending.roundId, templateId: pending.templateId || ''
     }, ev.result, {
       summary: rc.summary || '', taskCompleted: comp.ok, status: comp.ok ? 'completed' : 'failed',
       transcript, bound: true,
@@ -1877,7 +1934,7 @@ async function storeRound(pending, { results, verdict, bound, summary, status, f
     PRIVATE_TTL_DAYS * DAY);
 
   await docSet(callKey(pending.callId), { ...pending, state: 'done', roundDone: true }, DAY);
-  await docSet(roundLockKey(pending.uid, pending.qHash, pending.sig), null, 1000);
+  await releaseRound(pending);
   return record;
 }
 
@@ -1960,7 +2017,7 @@ async function pollRound(pending, uid){
         callId: `${pending.callId}:${results.length}`, placeKey: c.target.placeKey,
         qHash: pending.qHash, question: pending.question, placeName: c.target.name,
         phone: c.target.phone, private: true, uid: pending.uid,
-        roundId: pending.roundId
+        roundId: pending.roundId, templateId: pending.templateId || ''
       }, ev.result, {
         summary: c.sim.summary || 'Simulated call',
         taskCompleted: ev.result.answer_status !== 'unreachable',
