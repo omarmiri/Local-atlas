@@ -16,7 +16,7 @@ turns the answer into a dated, first-party fact the next visitor gets for free.
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.2**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.4**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ---
@@ -181,10 +181,14 @@ A completed call produces one record. The fields are the point of the feature:
 
 ## Private Actions
 
-A signed-in user can attach a visit — "I'm planning to visit Thursday evening" — and ask privately.
+A signed-in user picks a recommended question or types their own, and asks privately.
 
-The context is folded into the question text *before* validation, so both paths run the identical
-gauntlet and the confirmation screen shows the exact composed sentence that will be spoken.
+That is the whole form. It used to also ask for a visit date, an approximate time and one of two
+"intents", and fold all three into the sentence read down the phone — which made a one-question
+feature look like a booking screen for something that books nothing, and put a claim about the
+caller's plans into a stranger's ear to no purpose. A private ask is now the same question anyone
+else could ask; what makes it private is where the answer is stored. A recommended question is
+therefore the same fixed string here as on the public side, and no longer pays for a model check.
 
 The privacy guarantee is structural, not procedural. `publish()` forks: a private result is written
 to the account's own key and **never to the place's shared list**, so there is no later step that
@@ -201,6 +205,41 @@ Private results are kept for `CALLE_PRIVATE_TTL_DAYS` (30) against the public 90
 earns a long life by being reused; a private answer about one visit is spent the moment that visit
 happens, and keeping it longer is storing somebody's errand for no one's benefit.
 
+### Asking several places at once
+
+"Which of these three has the shortest wait?" is not three questions. It is one question whose
+answer only exists once all three have been asked, and everything above collects a fact about *a*
+place. So Private Actions can put the same question to the place you are looking at and the two
+nearest of the same kind, in one CALL-E task:
+
+| Field | What it does here |
+|---|---|
+| `recipients[]` | one task, several lines dialled — the feature, in one field |
+| `recipientResultSchema` | each business gets its own structured answer, on the same schema a single call uses |
+| `resultSchema` | the call-level result compares them |
+
+The division of labour is the point. **Each place's answer is a fact about that place** and passes
+the same checks as any other fact here: that recipient's own dial must have `status: completed`
+(the recipient-level twin of the call-level completion rule), and the answer must quote that
+recipient's own transcript. It then becomes one of the asker's private per-place records through
+`publish()`, so the round adds no new door into storage.
+
+**The comparison is not a fact anybody said.** It is bound to the places actually dialled — a
+`best_place` naming a business this round did not call, or one that never answered, is dropped
+rather than shown — and it is labelled on screen as derived rather than quoted. Losing it leaves
+three real answers; keeping an unbound one would put a recommendation under this app's name that no
+call supports.
+
+Rounds are private by construction, with no public form at all. A ranking is a judgement about
+businesses that never agreed to be compared, and it belongs to the person who asked for it. Two
+rules follow: the confirmation names **every** line that will ring, because "we'll call 3 nearby
+places" is not consent to ring three specific strangers; and rule 16 of the round script forbids the
+agent from mentioning, comparing or hinting that anyone else is being called. Each call is one
+straight question to one business.
+
+The budget is reserved for the whole round or not at all — half a round answers a comparison
+question with a comparison it cannot make.
+
 ### Deleting an account
 
 `DELETE /api/auth/account` is the way out, exposed as **Delete account** in the account sheet
@@ -214,7 +253,8 @@ Each module deletes what it owns, and the reply reports counts rather than just 
 | Tab preferences | `atlas:prefs:<uid>` |
 | The cached token — the **only** record here that ever held the email address | `auth:tok:<sha256(token)>` |
 | Every private call result, with its questions and transcripts | `calle:priv:<uid>:*` |
-| In-flight dedupe locks | `calle:lock:<uid>:*` |
+| Every comparison round, and the index of them | `calle:round:<uid>:*`, `calle:rounds:<uid>` |
+| In-flight dedupe locks | `calle:lock:<uid>:*`, `calle:rlock:<uid>:*` |
 | Call records for that account | `calle:call:*`, filtered on the `uid` in the body |
 | The sign-in record itself | Supabase `auth.users` |
 
@@ -341,6 +381,8 @@ The SDK is ESM-only and `server.js` is CommonJS, so it's reached through a lazy 
 |---|---|
 | `POST /api/ask-place` | Ask a question. Returns `202` + call id, `428` + preview if unconfirmed, or `200` + a reused fact. Requires sign-in. |
 | `GET  /api/ask-place/:id` | Poll a call's state (webhook fallback). |
+| `POST /api/ask-around` | Ask 2-3 places one question in a single CALL-E task. Private, requires sign-in. Polled through `/api/ask-place/:id`. |
+| `GET  /api/rounds` | This account's comparison rounds. |
 | `DELETE /api/auth/account` | Delete the account and everything stored under it. See [Deleting an account](#deleting-an-account). |
 | `POST /api/calle/webhook/:token` | Result callback. Takes the id, re-reads the record. |
 | `POST /api/calle/calls` | Operator view of one place's stored calls, transcripts included. Behind the real-call code. |
