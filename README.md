@@ -16,7 +16,7 @@ turns the answer into a dated, first-party fact the next visitor gets for free.
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.5**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.6**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ---
@@ -218,17 +218,36 @@ nearest of the same kind, in one CALL-E task:
 | `recipientResultSchema` | each business gets its own structured answer, on the same schema a single call uses |
 | `resultSchema` | the call-level result compares them |
 
+One script goes to several businesses, so the question has to be answerable by all of them and
+specific to none. A question that **names** one of them is refused structurally — it is about that
+business by construction — and anything typed is then screened by the model **once per recipient**,
+failing closed on the first refusal and naming which business refused it. The opener's noun has to
+be true of everyone too, so it is the noun they share, falling back to the generic `place` when they
+do not share one: a round of a restaurant and its neighbours must not open "one quick question about
+your restaurant" at a hardware store.
+
 The division of labour is the point. **Each place's answer is a fact about that place** and passes
 the same checks as any other fact here: that recipient's own dial must have `status: completed`
 (the recipient-level twin of the call-level completion rule), and the answer must quote that
 recipient's own transcript. It then becomes one of the asker's private per-place records through
 `publish()`, so the round adds no new door into storage.
 
-**The comparison is not a fact anybody said.** It is bound to the places actually dialled — a
-`best_place` naming a business this round did not call, or one that never answered, is dropped
-rather than shown — and it is labelled on screen as derived rather than quoted. Losing it leaves
-three real answers; keeping an unbound one would put a recommendation under this app's name that no
-call supports.
+**The comparison is not a fact anybody said.** It is bound to the places actually dialled — a winner
+identifying a business this round did not call, or one that never answered, is dropped rather than
+shown — and it is labelled on screen as derived rather than quoted. Losing it leaves three real
+answers; keeping an unbound one would put a recommendation under this app's name that no call
+supports.
+
+**The winner is identified by phone number, not by name,** and that is not a style choice. The task
+names no business, because one script is read to all of them, so there is nothing in the
+conversation from which a name could be known — a schema asking for "the exact name from the
+recipient list" was asking for something the model had never been shown, and a name it could only
+guess at is a name that cannot bind. The number is the one identifier the request and the record
+share. `metadata.recipients` carries the number-to-name mapping so it exists on the provider's side
+too, and it is checked against our own places on the way back, which makes it a binding as well as a
+mapping. If the call-level result still identifies nobody, the answers are compared here instead
+from the per-place results already checked — the same kind of claim either way, and the record notes
+which side produced it.
 
 Rounds are private by construction, with no public form at all. A ranking is a judgement about
 businesses that never agreed to be compared, and it belongs to the person who asked for it. Two
