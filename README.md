@@ -287,13 +287,14 @@ of helpfulness that spends credits on the wrong account. The server warns at boo
 
 A published entry says *confirmed by phone*, so that claim is checked rather than assumed. Results
 arrive two ways — an unsigned webhook naming a call id, and our own poll — and in both cases the
-API record is a document *about* a call, not proof it was **our** call. `bindResult()` requires all
-six of these before anything is published, and any failure is a refusal:
+API record is a document *about* a call, not proof it was **our** call. `bindResult()` and
+`publish()` require all seven of these before anything is published, and any failure is a refusal:
 
 | Binding | What must hold |
 |---|---|
 | **call** | we have a stored request for this exact call id |
-| **terminal** | the call is in a terminal state, and CALL-E did not judge the task failed |
+| **terminal** | the call has finished; queued and in-progress records are left to settle |
+| **completed** | it finished by *completing*, and CALL-E affirms `taskCompleted` — `failed`, `canceled`, a `false` verdict and no verdict at all are each a refusal |
 | **task** | `sha256(call.task)` matches the script we sent — same disclosure, same single question |
 | **recipient** | the transcript is read from an attempt on the number *we* dialled, not `recipients[0]` |
 | **metadata** | `app`, `place_key`, `q_hash`, `question` and `visibility` all match our record |
@@ -307,12 +308,16 @@ substring of at least 12 characters. Failures downgrade rather than invent:
   a fact about the place.
 - `answered` with a staff turn but an **ungrounded quote** ⇒ recorded as `unclear`, answer dropped.
   The call happened and the asker is told so; it is not a verified fact.
+- `answered` from a call that **did not complete** ⇒ recorded as `unknown`, answer dropped, and kept
+  off the shared list. A dropped or cancelled call is not a source, and CALL-E declining to say the
+  task completed is not the same as it saying so.
 - **any other binding failure** ⇒ nothing is published, and the reason is logged. The asker sees a
   finished call with no answer.
 
 The shared list has exactly one gate: `publish()` will not write to a place's public answers unless
-the result is marked bound. Losing an answer costs the asker a retry. Publishing an unbound one
-costs the claim every other entry on the page depends on.
+the result is marked bound *and* the call it came from completed. Both the webhook and the poll go
+through it, and so does the simulator. Losing an answer costs the asker a retry. Publishing an
+unbound one costs the claim every other entry on the page depends on.
 
 ## Webhooks are untrusted input
 
