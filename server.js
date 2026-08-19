@@ -14,6 +14,9 @@ const dns = require('dns');
 const net = require('net');
 const http = require('http');
 const https = require('https');
+/* Only for the counter probe on /api/cache-test — the app's own records live
+   in store.js, and this file's cache() is a separate, lossier thing. */
+const store = require('./store');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -116,7 +119,24 @@ app.get('/api/cache-test', async (req, res) => {
     const j = r.ok ? await r.json() : null;
     const ms = Date.now() - t0;
     await fetch(`${RURL}/del/${probe}`, { method: 'POST', headers: { Authorization: 'Bearer ' + RTOK } }).catch(()=>{});
-    return res.json({ ...out, roundTripMs: ms,
+
+    /* The counter path, checked separately, because it is the one every real
+       call goes through and it uses a different Redis verb from everything
+       above. A budget reservation that throws would refuse every live call, and
+       "the cache is fine" would not have told us. */
+    let counter = 'not tested';
+    try{
+      const ck = 'diag:incr:' + Date.now();
+      const a = await store.docIncr(ck, 2, 20000);
+      const b = await store.docIncr(ck, -1, 20000);
+      const back = await store.docGet(ck);
+      await store.docDel(ck);
+      counter = (a === 2 && b === 1 && Number(back) === 1)
+        ? 'OK — atomic counter works, so budget reservation does'
+        : `WRONG: incr=${a} decr=${b} readBack=${back}`;
+    }catch(e){ counter = 'ERROR ' + String(e.message || e); }
+
+    return res.json({ ...out, roundTripMs: ms, counter,
       verdict: j?.result === 'str:ping' ? 'OK — shared cache is live' : 'WROTE BUT READ BACK WRONG VALUE' });
   }catch(e){ res.json({ ...out, verdict: 'ERROR ' + String(e.message || e) }); }
 });
