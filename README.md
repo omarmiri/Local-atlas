@@ -16,7 +16,7 @@ turns the answer into a dated, first-party fact the next visitor gets for free.
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.9**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v10.0**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ---
@@ -142,6 +142,8 @@ because `/api/ask-place` is a public URL.
 | **Simulated by default** | A wrong or missing access code produces a clearly-labelled simulated answer — never a silent real call. One `live` flag decides it, read by every later branch. |
 | **Real calls need a code** | `REAL_CALL_ACCESS_CODE`, compared with a SHA-256 + `timingSafeEqual` (hash first: a length mismatch throws, and the throw leaks the length). With no code configured, **no request can ever reach the real API.** |
 | **Sign-in required** | `/api/ask-place` sits behind `requireUser`. |
+| **The number comes from the listing, not the request** | `place` arrives in the request body, so until v10.0 the number to dial did too — and the UI being well behaved is not a property of the system. An account holder who also had the real-call code could post any place they liked, with `openNow: true` and `confirmed: true`, and have this app ring a number of their choosing while announcing itself as calling for a visitor. The server now looks the number up again itself by the listing's provider id and dials **that**; a live call with nothing to check against is refused. Only the operator's own demo line is exempt. |
+| **And only numbers worth dialling** | US and Canadian numbers only, no premium rate. Emergency and service codes were already unreachable — 911 and 411 are too short to survive E.164 normalisation — but every international number was not, and `+447700900123` normalises perfectly well. |
 | **Explicit confirmation** | An unconfirmed request gets `428` and a preview: the exact question, the exact opener, the exact disclosure, the number to be dialled. It sits *after* validation (confirming a question that would then be rejected wastes the decision) and *before* budget reservation (an abandoned confirmation costs nothing). |
 | **Never call a closed business** | `openNow === false` blocks. `null` means we don't know, and not knowing isn't a reason to refuse — only an explicit false. |
 | **Never call at an unreasonable hour** | 10am–8pm **where the phone is**, read from the listing's own coordinates. The hour that matters belongs to the person picking up: judging every call by one Eastern clock made 10am Eastern a 7am call in Vancouver and a 4am one in Honolulu, while refusing perfectly civil calls at 6pm Pacific. Longitude gives the zone and `Intl` gives the hour, so daylight time is not an arithmetic bug waiting for March. |
