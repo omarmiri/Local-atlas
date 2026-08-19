@@ -141,13 +141,18 @@ app.get('/api/cache-test', async (req, res) => {
        runs gets this shared IP rate-limited, and a per-element read is what
        decides whether OSM listings — about a third of which carry a phone — can
        be called live or only simulated. */
-    let osmLookup = 'not tested';
-    try{
+    const osmLookup = {};
+    for(const url of OVERPASS_MIRRORS){
+      const host = url.replace(/^https?:\/\//, '').split('/')[0];
       const t1 = Date.now();
-      const j = await overpassUpstream('[out:json][timeout:10];node(1811947573);out tags 1;');
-      const tags = ((j.elements || [])[0] || {}).tags || {};
-      osmLookup = `OK — one element in ${Date.now() - t1}ms (${tags.name || 'unnamed'})`;
-    }catch(e){ osmLookup = 'FAILED: ' + String(e.message || e).slice(0, 80); }
+      try{
+        const rr = await fetch(url, { method: 'POST',
+          body: 'data=' + encodeURIComponent('[out:json][timeout:10];node(1811947573);out tags 1;'),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          signal: AbortSignal.timeout(8000) });
+        osmLookup[host] = rr.ok ? `OK in ${Date.now() - t1}ms` : 'HTTP ' + rr.status;
+      }catch(e){ osmLookup[host] = String(e.message || e).slice(0, 40); }
+    }
 
     return res.json({ ...out, roundTripMs: ms, counter, osmLookup,
       verdict: j?.result === 'str:ping' ? 'OK — shared cache is live' : 'WROTE BUT READ BACK WRONG VALUE' });
