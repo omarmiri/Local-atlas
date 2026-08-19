@@ -147,7 +147,7 @@ async function client(){
 
 /* Durable records live in store.js — see the note there on why this is not
    server.js's read-through cache. */
-const { docGet, docSet, docDel, docScan } = require('./store');
+const { docGet, docSet, docIncr, docDel, docScan } = require('./store');
 
 const DAY = 86400e3;
 const faqKey = pk => 'calle:faq:' + pk;              // published answers for a place
@@ -887,12 +887,27 @@ const localeFor = cc => cc === 'CA' ? 'en-CA' : 'en-US';
    Anything that can dial passes through here first. */
 /* `n` is the number of lines that will actually ring, so a round of three
    reserves three. All-or-nothing on purpose: half a round is a round that
-   answers a comparison question with a comparison it cannot make. */
+   answers a comparison question with a comparison it cannot make.
+
+   Claim first, check second, put it back if it did not fit. The obvious order —
+   read the total, compare it to the cap, write the new total — cannot hold a
+   cap at all once two requests overlap: both read the same number, both decide
+   there is room, and the later write erases the earlier one. Ten concurrent
+   asks against a cap of five all succeeded, and the counter finished on one.
+
+   Adding first inverts every one of those failures. The increment is atomic, so
+   no two requests can be handed the same slot; a request that overshoots
+   subtracts what it added; and in the moment between those two steps the total
+   reads high rather than low, so a third request refuses a call it could have
+   had instead of placing one it could not. A budget that is occasionally a
+   little too strict is a budget. */
 async function reserveBudget(n = 1){
   const k = budgetKey();
-  const used = (await docGet(k)) || 0;
-  if(used + n > DAILY_BUDGET) return false;
-  await docSet(k, used + n, 2 * DAY);
+  const total = await docIncr(k, n, 2 * DAY);
+  if(total > DAILY_BUDGET){
+    await docIncr(k, -n, 2 * DAY);
+    return false;
+  }
   return true;
 }
 

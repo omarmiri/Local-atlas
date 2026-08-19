@@ -16,7 +16,7 @@ turns the answer into a dated, first-party fact the next visitor gets for free.
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.7**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.8**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ---
@@ -146,7 +146,7 @@ because `/api/ask-place` is a public URL.
 | **Never call a closed business** | `openNow === false` blocks. `null` means we don't know, and not knowing isn't a reason to refuse — only an explicit false. |
 | **Never call at an unreasonable hour** | 10am–8pm **where the phone is**, read from the listing's own coordinates. The hour that matters belongs to the person picking up: judging every call by one Eastern clock made 10am Eastern a 7am call in Vancouver and a 4am one in Honolulu, while refusing perfectly civil calls at 6pm Pacific. Longitude gives the zone and `Intl` gives the hour, so daylight time is not an arithmetic bug waiting for March. |
 | **Never call twice for one question** | A 10-minute in-flight lock, plus a CALL-E `Idempotency-Key`. A forced recheck adds an hour bucket to the key — otherwise CALL-E would replay the original call and hand back the very answer being rechecked, while a double-click inside the hour still dedupes. |
-| **Hard daily ceiling** | `CALLE_DAILY_CALL_BUDGET` (default 25), reserved before dialling — and **only** before dialling. The reservation used to sit above the simulator branch, so a demo, or a reviewer working through the flow, spent the day's real-call allowance on calls that rang nobody and then told the next person a budget they had not used was exhausted. A round reserves one slot per line, all or nothing. |
+| **Hard daily ceiling** | `CALLE_DAILY_CALL_BUDGET` (default 25), reserved atomically before dialling — and **only** before dialling. The reservation adds first and puts it back if it did not fit, because read-compare-write cannot hold a cap once two requests overlap: both read the same total, both find room, and the later write erases the earlier. Ten concurrent asks against a cap of five all succeeded, and the counter finished on one. The reservation used to sit above the simulator branch, so a demo, or a reviewer working through the flow, spent the day's real-call allowance on calls that rang nobody and then told the next person a budget they had not used was exhausted. A round reserves one slot per line, all or nothing. |
 | **The demo line is exempt** — and only it | The courtesy rules are keyed on the **dialled number**, not on the client's `demo` flag, which anyone could set on a real business to call it at 3am. |
 
 ### Canada is not a US call
