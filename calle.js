@@ -163,14 +163,62 @@ const privKey = (uid, pk) => `calle:priv:${uid}:${pk}`;
 
 /* ---- identity + input hygiene ---- */
 
-/* Places arrive from Google, Foursquare or OSM, each with its own id space.
-   Prefer a provider id so the FAQ survives a name change; fall back to a
-   name+coordinate key so OSM-only places still work. */
+/* Places arrive from Google, Foursquare or OSM, each with its own id space, and
+   a listing this app served carries exactly one of them: the three search paths
+   build items from one provider each and never merge two records into one.
+
+   That invariant was not enforced, and two pieces of code disagreed about which
+   id a place *was*. server.js reads the number back from OSM first when `osmId`
+   is present; placeKey ignored `osmId` entirely and keyed on `gid`. So a body
+   carrying place A's `osmId` and place B's `gid` verified and dialled A's line
+   while the task announced B, and the answer was published under B's key — a
+   real call to one business, filed and shown as a fact about another. The same
+   split bit the honest case: an OSM listing was keyed by name and coordinates,
+   so a renamed or re-sited object silently became a different record.
+
+   Identity is therefore resolved once, here, and everything downstream — the
+   provider lookup, the storage key, the call script and the stored entry — is
+   derived from that single reference. */
+function providerRef(p){
+  const refs = [];
+  const gid   = String((p && p.gid) || '').trim();
+  const fsqId = String((p && p.fsqId) || '').trim();
+  const osmId = String((p && p.osmId) || '').trim();
+  if(gid)   refs.push({ kind: 'g', id: gid,   key: 'g:' + gid.replace(/[^\w-]/g, '') });
+  if(fsqId) refs.push({ kind: 'f', id: fsqId, key: 'f:' + fsqId.replace(/[^\w]/g, '') });
+  if(osmId) refs.push({ kind: 'o', id: osmId, key: 'o:' + osmId.replace(/[^\w]/g, '') });
+  return refs;
+}
+
+/* Prefer the provider id so a record survives a name change; fall back to a
+   name+coordinate key only for a listing that carries no id at all. */
 function placeKey(p){
-  if(p.gid)   return 'g:' + String(p.gid).replace(/[^\w-]/g, '');
-  if(p.fsqId) return 'f:' + String(p.fsqId).replace(/[^\w]/g, '');
+  const refs = providerRef(p);
+  if(refs.length === 1) return refs[0].key;
+  /* A body naming two sources gets a key of its own rather than being folded
+     into either one. Every path that can dial rejects it outright — this is
+     for the read paths, which must not be able to reach a single-source
+     record by pairing its id with somebody else's. */
+  if(refs.length > 1) return 'x:' + refs.map(r => r.key).sort().join('+');
   const n = String(p.name || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 40);
   return `n:${n}:${(+p.lat).toFixed(4)},${(+p.lon).toFixed(4)}`;
+}
+
+/* The listing as the *server* read it back from the provider — see
+   listedListing() in server.js. Present only when that lookup succeeded, and
+   set on the server side of the spread, so a `listed` invented in a request
+   body cannot survive to be mistaken for one we fetched. */
+const listedOf = p => (p && p.listed && typeof p.listed === 'object') ? p.listed : null;
+
+/* Name and address come from the same fetch that proved the number, so the
+   business the agent announces, and the record the answer is filed under, are
+   the business whose line was verified. Falls back to the submitted listing
+   only when there was no lookup at all — which is the simulated path, since a
+   live call already requires a verified number. */
+function verifiedIdentity(place){
+  const listed = listedOf(place);
+  if(!listed || !listed.name) return place;
+  return { ...place, name: listed.name, addr: listed.addr || '' };
 }
 
 /* Providers hand back display formats — Google "(212) 555-0134", OSM
@@ -960,6 +1008,21 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
      and everybody's to write. Fail loudly rather than storing it under ''. */
   if(isPrivate && !uid) return { error: 'Sign in to request a private call.', status: 401 };
 
+  /* One listing, one source. See providerRef(): a body naming two of them is
+     not a listing this app ever served, and it is the shape that let a request
+     have one place's number verified while another place's name was announced
+     and stored. Refused rather than resolved, because there is no honest way to
+     pick which half of it is the place being asked about. */
+  if(providerRef(place).length > 1)
+    return { error: 'That listing carries ids from more than one source, so we cannot tell which place it is.', status: 400 };
+
+  /* Everything from here on speaks about the place the *server* looked up, not
+     the one the request described — same object where there was no lookup to
+     do. Established before the question is screened so the moderator, the call
+     script, the confirmation preview and the stored record all describe one
+     business. */
+  const target = verifiedIdentity(place);
+
   /* Simulate unless the caller proved they may spend a credit. Note which way
      the default falls: a wrong or missing code produces a clearly-labelled
      simulated answer, never a silent real call. Every later branch reads
@@ -985,17 +1048,17 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
   }else{
     v = validateQuestion(question);
     if(!v.ok) return { error: v.error, status: 400 };
-    const mod = await moderateQuestion(v.question, place);
+    const mod = await moderateQuestion(v.question, target);
     if(!mod.allowed) return { error: mod.reason, status: 400, moderated: true };
   }
 
   /* The number the *server* read back from the listing wins over the one in the
-     request. See listedPhone() in server.js: the request body is the caller's
+     request. See listedListing() in server.js: the request body is the caller's
      account of what a listing says, and a call is not something to place on
      somebody's account of anything. A simulated call keeps the submitted
      number, because nothing rings and the demo must work with no provider keys
      configured at all. */
-  const verified = normalizeE164(place.listedPhone);
+  const verified = normalizeE164(listedOf(place) && listedOf(place).phone);
   const phone = verified || normalizeE164(place.phone);
   if(!phone) return { error: 'No callable public phone number is listed for this place.', status: 422 };
 
@@ -1016,7 +1079,7 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
      the same reason it is exempt from the courtesy rules: we own it. */
   if(live && !isOwnLine && !verified)
     return { status: 422, unverified: true,
-      error: `We couldn't confirm ${place.name}'s number against its listing, so no call was placed. This app only dials a number it served for that listing itself. Reopen the place and try again — a listing left open for half a day goes stale.` };
+      error: `We couldn't confirm ${target.name}'s number against its listing, so no call was placed. This app only dials a number it served for that listing itself. Reopen the place and try again — a listing left open for half a day goes stale.` };
 
   /* ---- don't dial a closed business ----
      The app already knows whether a place is open — `openNow` comes from
@@ -1029,13 +1092,15 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
      open" is not the same as "a reasonable moment to ring a stranger". The hour
      that matters is the one on their wall, so it is read from their own
      coordinates — see localHour. */
-  if(live && !isOwnLine && place.openNow === false)
-    return { error: `${place.name} looks closed right now. We'll only call while they're open — try again during opening hours.`, status: 409, closed: true };
+  if(live && !isOwnLine && target.openNow === false)
+    return { error: `${target.name} looks closed right now. We'll only call while they're open — try again during opening hours.`, status: 409, closed: true };
 
-  if(live && !isOwnLine && !insideCallingWindow(place))
-    return { error: `It's ${localHour(Number(place.lat), Number(place.lon))}:00 where ${place.name} is. Calls are only placed between 10am and 8pm local time, so a real person is not rung at an unreasonable hour.`, status: 409, outsideWindow: true };
+  if(live && !isOwnLine && !insideCallingWindow(target))
+    return { error: `It's ${localHour(Number(target.lat), Number(target.lon))}:00 where ${target.name} is. Calls are only placed between 10am and 8pm local time, so a real person is not rung at an unreasonable hour.`, status: 409, outsideWindow: true };
 
-  const pk = placeKey(place), qh = qHash(v.question);
+  /* Keyed on the same single reference the lookup above used, so the record a
+     call writes to is the record whose number was dialled. */
+  const pk = placeKey(target), qh = qHash(v.question);
 
   /* Reuse is the whole point of the feature — the second visitor gets the
      answer for free — so a stored answer wins by default. But `force` exists
@@ -1080,13 +1145,13 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
      costs nothing. */
   if(live && !confirmed)
     return { status: 428, needsConfirm: true, preview: {
-      question: v.question, opener: openerFor(place), disclosure: DISCLOSURE, phone,
-      placeName: place.name, callerIdentity: CALLER_ID
+      question: v.question, opener: openerFor(target), disclosure: DISCLOSURE, phone,
+      placeName: target.name, callerIdentity: CALLER_ID
     } };
 
   const pending = {
     callId: '', placeKey: pk, qHash: qh, question: v.question,
-    placeName: place.name, placeAddr: place.addr || '', phone,
+    placeName: target.name, placeAddr: target.addr || '', phone,
     createdAt: Date.now(), state: 'queued',
     // carried so publish() knows where the result belongs, and so topicFor can
     // use the fixed label table instead of paying for a model call
@@ -1100,7 +1165,7 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
        polls into producing two different transcripts for one call. */
     pending.callId = 'call_sim_' + Math.random().toString(36).slice(2, 10);
     pending.state = 'in_progress';
-    pending.sim = await simulate({ place, question: v.question, outcome: simOutcome(pk, qh) });
+    pending.sim = await simulate({ place: target, question: v.question, outcome: simOutcome(pk, qh) });
     await docSet(callKey(pending.callId), pending, DAY);
     await docSet(lockKey(pk, qh, isPrivate ? uid : ''), { callId: pending.callId }, 10 * 60e3);
     return { status: 202, callId: pending.callId, state: 'in_progress', simulated: true };
@@ -1129,13 +1194,15 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
   const idemKey = `local-atlas:${isPrivate ? uid + ':' : ''}${pk}:${qh}` +
     (force ? `:r${Math.floor(Date.now() / 3600e3)}` : '');
 
-  const task = buildTask({ place, question: v.question, phone });
+  /* The verified listing, so the business the agent names on the phone is the
+     business whose number it is dialling. */
+  const task = buildTask({ place: target, question: v.question, phone });
   const call = await c.calls.create({
     task,
     /* The place's own country, not a constant. This app covers Canada, and a
        Canadian number sent as a US recipient is a claim about somebody else's
        business that we already knew was false. */
-    recipient: { phone, region: countryOf(place), locale: localeFor(countryOf(place)) },
+    recipient: { phone, region: countryOf(target), locale: localeFor(countryOf(target)) },
     resultSchema: RESULT_SCHEMA,
     /* Echoed back on the call and on the webhook, and checked field by field
        against our own record before anything is published — see bindResult().
@@ -1911,9 +1978,17 @@ async function askAround({ places, question, templateId, accessCode, confirmed, 
   const seen = new Set();
   const targets = [];
   const dropped = [];
-  for(const p of list){
-    // same rule as a single ask: the server's own reading of the listing wins
-    const verified = normalizeE164(p.listedPhone);
+  for(const submitted of list){
+    /* Same two rules as a single ask, in the same order: a listing has to name
+       one source, and the server's own reading of that source is what the round
+       calls this place — its name here is the name in the comparison, in the
+       per-place private records, and in the dropped list below. */
+    if(providerRef(submitted).length > 1){
+      dropped.push({ name: submitted.name, why: 'its listing carries ids from more than one source' });
+      continue;
+    }
+    const p = verifiedIdentity(submitted);
+    const verified = normalizeE164(listedOf(p) && listedOf(p).phone);
     const phone = verified || normalizeE164(p.phone);
     if(!phone){ dropped.push({ name: p.name, why: 'no callable number' }); continue; }
     const can = dialable(phone);
@@ -2041,7 +2116,7 @@ async function askAround({ places, question, templateId, accessCode, confirmed, 
   if(!live){
     pending.callId = 'call_sim_' + Math.random().toString(36).slice(2, 10);
     pending.state = 'in_progress';
-    pending.sim = await simulateRound({ targets, places: list, question: v.question, noun: pending.noun });
+    pending.sim = await simulateRound({ targets, question: v.question, noun: pending.noun });
     await docSet(callKey(pending.callId), pending, DAY);
     await holdRound(pending);
     return { status: 202, callId: pending.callId, roundId, state: 'in_progress',
@@ -2240,12 +2315,18 @@ async function storeRound(pending, { results, verdict, bound, summary, status, f
    feature nobody will try. Each place gets its own simulated call from the
    existing simulator, so the per-place results are the same shape a real round
    produces; only the verdict is assembled here. */
-async function simulateRound({ targets, places, question, noun }){
+/* Simulated from the targets alone. It used to take the submitted list too and
+   pair them by index — `places[i]` against `targets[i]` — which only lines up
+   when nothing was dropped, and things are dropped routinely: one closed
+   business shifts every place after it, and each transcript is then written
+   about the wrong neighbour. The target already carries the verified name,
+   address and kind, so there is nothing the submitted list can add. */
+async function simulateRound({ targets, question, noun }){
   const calls = [];
   for(let i = 0; i < targets.length; i++){
     const t = targets[i];
     const sim = await simulate({
-      place: places[i] || { name: t.name },
+      place: t,
       question,
       outcome: simOutcome(t.placeKey, qHash(question) + ':round')
     });
@@ -2423,7 +2504,10 @@ async function listCalls(place){
 
 module.exports = {
   configured, askPlace, pollCall, handleWebhook, getFaq, getPrivate,
-  placeKey, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
+  /* providerRef is what server.js routes its listing lookup on, so the id it
+     verifies a number against and the id placeKey files the answer under are
+     the same one, resolved by the same function. */
+  placeKey, providerRef, normalizeE164, validateQuestion, sanitizeQuestion, buildTask,
   realCallOk, realCallsPossible, templatesFor, moderateQuestion, suggestQuestions,
   listCalls, publicEntry, summarizeCall, forgetUser,
   /* Exported so the binding rules can be exercised directly against hand-built

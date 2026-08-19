@@ -1623,13 +1623,30 @@ const calleErrStatus = e =>
    So the server looks the number up again itself, by the provider id the
    listing carries, and dials what the provider says rather than what the caller
    sent. Cached for a day: this is the same lookup the details panel already
-   makes, and a business's number is not news. */
+   makes, and a business's number is not news.
+
+   It reads back the *name and address* too, not only the number. Verifying one
+   field and taking the rest of the identity from the request body was a gap of
+   its own: the answer this call produces is announced, filed and displayed
+   under a name nothing checked. Now one fetch settles who was called, and
+   calle.js speaks about that place from there on.
+
+   Which id to fetch is calle's providerRef, not a local guess. The two used to
+   disagree — this function tried OSM first, placeKey ignored osmId entirely —
+   and a body carrying two ids was verified against one place and published
+   under the other. One resolver, one identity, both sides. */
 const OSM_UA = 'local-atlas/1.0 (+https://local-atlas-api.onrender.com; listing verification)';
-const GOOG_PHONE_MASK = 'id,nationalPhoneNumber,internationalPhoneNumber';
-async function listedPhone(place){
-  const gid = String((place && place.gid) || '');
-  const fsqId = String((place && place.fsqId) || '');
-  const osmId = String((place && place.osmId) || '');
+const GOOG_LISTING_MASK = 'id,displayName,formattedAddress,nationalPhoneNumber,internationalPhoneNumber';
+async function listedListing(place){
+  const refs = calle.providerRef(place);
+  /* Nothing to check against, or two things to check against and no honest way
+     to pick one — the ask routes refuse the second case outright, and this
+     returns null either way rather than choosing. */
+  if(refs.length !== 1) return null;
+  const ref = refs[0];
+  const gid = ref.kind === 'g' ? ref.id : '';
+  const fsqId = ref.kind === 'f' ? ref.id : '';
+  const osmId = ref.kind === 'o' ? ref.id : '';
   try{
     /* Not Overpass — the OSM API. Roughly a third of the named OSM places this
        app shows carry a phone (46 in rural Vermont, 359 in Manhattan), so the
@@ -1644,39 +1661,53 @@ async function listedPhone(place){
        id in about a hundred milliseconds. That is the right shape of request
        anyway: one object, at the moment somebody asks a question, cached for a
        day, rather than a search. */
-    if(/^[nwr]\d+$/.test(osmId)) return await cached('lp:o:' + osmId, 86400e3, async () => {
+    /* `lst:` rather than the old `lp:` because the cached value changed shape
+       from a phone string to the listing — a day of entries written by the
+       previous deploy would otherwise come back as a bare string and read as a
+       listing with no name at all. */
+    if(/^[nwr]\d+$/.test(osmId)) return await cached('lst:o:' + osmId, 86400e3, async () => {
       const kind = { n: 'node', w: 'way', r: 'relation' }[osmId[0]];
       const rr = await fetch(`https://api.openstreetmap.org/api/0.6/${kind}/${osmId.slice(1)}.json`,
         { headers: { 'User-Agent': OSM_UA }, signal: AbortSignal.timeout(8000) });
       if(!rr.ok) throw new Error('OSM API ' + rr.status);
       const t = (((await rr.json()).elements || [])[0] || {}).tags || {};
-      return t.phone || t['contact:phone'] || '';
+      /* The same two tags the map itself reads for this object, so the verified
+         name matches what the listing showed rather than a second opinion. */
+      return { phone: t.phone || t['contact:phone'] || '',
+        name: t.name || '',
+        addr: [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' ') };
     });
-    if(gid && GOOG) return await cached('lp:g:' + gid, 86400e3, async () => {
+    if(gid && GOOG) return await cached('lst:g:' + gid, 86400e3, async () => {
       const rr = await fetch(`${GOOG_BASE}/places/${encodeURIComponent(gid)}`,
-        { headers: { 'X-Goog-Api-Key': GOOG, 'X-Goog-FieldMask': GOOG_PHONE_MASK } });
+        { headers: { 'X-Goog-Api-Key': GOOG, 'X-Goog-FieldMask': GOOG_LISTING_MASK } });
       if(!rr.ok) throw new Error('Google Places: ' + await googErr(rr));
       const j = await rr.json();
-      return j.nationalPhoneNumber || j.internationalPhoneNumber || '';
+      /* displayName and formattedAddress are cheaper fields than the phone
+         numbers already in the mask, and Google bills the whole request at the
+         most expensive tier it touches, so identity rides along for nothing. */
+      return { phone: j.nationalPhoneNumber || j.internationalPhoneNumber || '',
+        name: j.displayName?.text || '', addr: j.formattedAddress || '' };
     });
-    if(fsqId && FSQ) return await cached('lp:f:' + fsqId, 86400e3, async () => {
-      const rr = await fetch(`${FSQ_BASE}/places/${encodeURIComponent(fsqId)}?fields=tel`,
+    if(fsqId && FSQ) return await cached('lst:f:' + fsqId, 86400e3, async () => {
+      const rr = await fetch(`${FSQ_BASE}/places/${encodeURIComponent(fsqId)}?fields=tel%2Cname%2Clocation`,
         { headers: FSQ_HDRS() });
       if(!rr.ok) throw new Error('FSQ ' + rr.status);
-      return (await rr.json()).tel || '';
+      const j = await rr.json();
+      return { phone: j.tel || '', name: j.name || '',
+        addr: j.location?.formatted_address || '' };
     });
   }catch(e){
     /* A lookup that fails is not a lookup that succeeded. Returning null sends
        this down the unverified path, where a live call is refused. */
-    console.warn('listedPhone failed:', String(e.message || e));
+    console.warn('listedListing failed:', String(e.message || e));
     return null;
   }
-  return null;                       // no provider id: nothing to check against
+  return null;              // an id we cannot fetch: nothing to check against
 }
 
-/* Set on the server, always, so a `listedPhone` invented by a caller cannot
-   survive the spread and be mistaken for one we looked up. */
-const withListedPhone = async place => ({ ...place, listedPhone: await listedPhone(place) });
+/* Set on the server, always, so a `listed` invented by a caller cannot survive
+   the spread and be mistaken for one we looked up. */
+const withListedListing = async place => ({ ...place, listed: await listedListing(place) });
 
 /* Every path through here can spend a CALL-E credit, so every path through
    here needs a name attached — that is the whole reason this app grew accounts.
@@ -1689,7 +1720,7 @@ app.post('/api/ask-place', express.json({ limit: '8kb' }), auth.attachUser, auth
       const { place, question, templateId, confirmed, force, isPrivate } = req.body || {};
       if(!place || !place.name || place.lat == null || place.lon == null)
         return res.status(400).json({ error: 'place {name, lat, lon, phone} required' });
-      const r = await calle.askPlace({ place: await withListedPhone(place), question, templateId,
+      const r = await calle.askPlace({ place: await withListedListing(place), question, templateId,
         confirmed: confirmed === true, force: force === true,
         isPrivate: isPrivate === true, uid: req.user.id,
         accessCode: req.get('x-atlas-access') || '' });
@@ -1713,7 +1744,7 @@ app.post('/api/ask-around', express.json({ limit: '16kb' }), auth.attachUser, au
         return res.status(400).json({ error: 'places[] required' });
       if(places.some(p => !p || !p.name || p.lat == null || p.lon == null))
         return res.status(400).json({ error: 'each place needs {name, lat, lon, phone}' });
-      const r = await calle.askAround({ places: await Promise.all(places.map(withListedPhone)),
+      const r = await calle.askAround({ places: await Promise.all(places.map(withListedListing)),
         question, templateId,
         confirmed: confirmed === true,
         uid: req.user.id, accessCode: req.get('x-atlas-access') || '' });
