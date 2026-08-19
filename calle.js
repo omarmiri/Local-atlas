@@ -192,17 +192,23 @@ function normalizeE164(raw){
 
    Emergency and service codes were already unreachable — 911, 988 and 411 are
    three digits and E.164 wants at least seven, so they never survived
-   normalisation. What did survive was every number on earth: `+447700900123`
-   and `+2348012345678` normalise perfectly well, and this app covers the US and
-   Canada. Premium rate is the other one worth naming, because it is the shape
-   of abuse where the person who picks up profits from the call. */
-const PREMIUM_NANP = /^\+1(900|976)/;
+   normalisation. What did survive was every number on earth: the reserved UK
+   example `+447700900123` normalises perfectly well, and this app covers the US
+   and Canada. Premium rate is the other one worth naming, because it is the shape
+   of abuse where the person who picks up profits from the call.
+
+   900 is an area code; 976 is an *exchange* — the middle three digits, as in
+   +1 (212) 976-xxxx — so the two have to be matched in different positions.
+   Written as `(900|976)` at first, which is wrong in both directions at once:
+   it blocked 976 as an area code, which is not one, and let every real 976
+   exchange straight through. Corrected upstream by a CALL-E maintainer. */
+const PREMIUM_NANP = /^\+1(?:900\d{7}|\d{3}976\d{4})$/;
 function dialable(e164){
   if(!e164) return { ok: false, why: 'that is not a phone number we can dial' };
   if(!/^\+1\d{10}$/.test(e164))
     return { ok: false, why: 'this app only calls US and Canadian numbers' };
   if(PREMIUM_NANP.test(e164))
-    return { ok: false, why: 'that is a premium-rate number' };
+    return { ok: false, why: 'that matches a common premium-rate number pattern' };
   return { ok: true };
 }
 
