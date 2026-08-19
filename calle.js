@@ -1010,7 +1010,7 @@ async function askPlace({ place, question, templateId, accessCode, confirmed, fo
      the same reason it is exempt from the courtesy rules: we own it. */
   if(live && !isOwnLine && !verified)
     return { status: 422, unverified: true,
-      error: `We couldn't confirm ${place.name}'s number against its listing just now, so no call was placed. This app only dials a number it can read back from the listing itself.` };
+      error: `We couldn't confirm ${place.name}'s number against its listing, so no call was placed. This app only dials a number it served for that listing itself. Reopen the place and try again — a listing left open for half a day goes stale.` };
 
   /* ---- don't dial a closed business ----
      The app already knows whether a place is open — `openNow` comes from
@@ -2423,7 +2423,7 @@ module.exports = {
   /* Exported so the binding rules can be exercised directly against hand-built
      API records — the refusals are the part of this file most worth testing and
      the least reachable through a real call. */
-  bindResult, evidenceCheck, completionCheck, localHour, zoneFor, countryOf, insideCallingWindow, bindRound, bindVerdict, recipientCheck,
+  bindResult, evidenceCheck, completionCheck, dialable, localHour, zoneFor, countryOf, insideCallingWindow, bindRound, bindVerdict, recipientCheck,
   askAround, getRounds, buildRoundTask, ROUND_SCHEMA, ROUND_MIN, ROUND_MAX,
   simulate, simFallback, simOutcome, TEMPLATES, RESULT_SCHEMA, openerFor, placeNoun, DISCLOSURE,
   info: () => ({
