@@ -16,7 +16,7 @@ turns the answer into a dated, first-party fact the next visitor gets for free.
 
 The frontend is a single `index.html` (map UI + all tabs). The backend is a small
 Node/Express server (`server.js`) that serves the static file and proxies every keyed or
-CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.6**
+CORS-restricted API, holding a shared two-level cache. Current app version badge: **v9.7**
 (shown in the header; bump it when you ship so you can confirm a deploy landed).
 
 ---
@@ -144,10 +144,29 @@ because `/api/ask-place` is a public URL.
 | **Sign-in required** | `/api/ask-place` sits behind `requireUser`. |
 | **Explicit confirmation** | An unconfirmed request gets `428` and a preview: the exact question, the exact opener, the exact disclosure, the number to be dialled. It sits *after* validation (confirming a question that would then be rejected wastes the decision) and *before* budget reservation (an abandoned confirmation costs nothing). |
 | **Never call a closed business** | `openNow === false` blocks. `null` means we don't know, and not knowing isn't a reason to refuse — only an explicit false. |
-| **Never call at an unreasonable hour** | 10am–8pm Eastern. "Technically open" is not the same as a reasonable moment to ring a stranger. |
+| **Never call at an unreasonable hour** | 10am–8pm **where the phone is**, read from the listing's own coordinates. The hour that matters belongs to the person picking up: judging every call by one Eastern clock made 10am Eastern a 7am call in Vancouver and a 4am one in Honolulu, while refusing perfectly civil calls at 6pm Pacific. Longitude gives the zone and `Intl` gives the hour, so daylight time is not an arithmetic bug waiting for March. |
 | **Never call twice for one question** | A 10-minute in-flight lock, plus a CALL-E `Idempotency-Key`. A forced recheck adds an hour bucket to the key — otherwise CALL-E would replay the original call and hand back the very answer being rechecked, while a double-click inside the hour still dedupes. |
-| **Hard daily ceiling** | `CALLE_DAILY_CALL_BUDGET` (default 25), reserved before dialling. |
+| **Hard daily ceiling** | `CALLE_DAILY_CALL_BUDGET` (default 25), reserved before dialling — and **only** before dialling. The reservation used to sit above the simulator branch, so a demo, or a reviewer working through the flow, spent the day's real-call allowance on calls that rang nobody and then told the next person a budget they had not used was exhausted. A round reserves one slot per line, all or nothing. |
 | **The demo line is exempt** — and only it | The courtesy rules are keyed on the **dialled number**, not on the client's `demo` flag, which anyone could set on a real business to call it at 3am. |
+
+### Canada is not a US call
+
+The app covers both countries, and the call did not. Every recipient went out as `region: 'US'` with
+an `en-US` locale, and the script told the person answering in Ottawa that "you are calling a local
+US business" in American vocabulary. NANP numbers dial either way, so nothing failed loudly — it was
+just wrong about somebody else's business, on a call they did not ask for.
+
+The client already knows which country it geocoded, because a US ZIP and a Canadian postal code take
+different lookup paths, so it sends it with the place. The server uses it for the recipient's
+`region` and `locale`, and for the two lines of the script that assert where the callee is. A round
+whose places straddle the border claims neither country rather than picking the anchor's, on the same
+rule that decides the opener's noun: one script, so anything it asserts has to be true of everyone
+hearing it.
+
+Known limit: the agent speaks English to Québec businesses. The questions are composed in English and
+the UI is English, so a `fr-CA` locale would pair a French voice with an English question — worse
+than the honest version. Real French support means translating the question, the disclosure and the
+result extraction, which is a feature rather than a flag.
 
 ## Verified Facts
 
@@ -756,8 +775,9 @@ recorded who asked; see [Deleting an account](#deleting-an-account).
 - **Ask the Place needs a phone number.** Places with no listed number can't be called; the panel
   says so rather than offering a button that fails.
 - **Real calls are gated and budgeted.** No access code ⇒ simulated. `CALLE_DRY_RUN=1` ⇒ simulated,
-  whatever else is set. Budget spent ⇒ refused until tomorrow. Outside 10am–8pm Eastern, or the
-  place is listed closed ⇒ refused.
+  whatever else is set. Budget spent ⇒ refused until tomorrow. Outside 10am–8pm *where that phone
+  is*, or the place is listed closed ⇒ refused. A simulated call reserves no budget, because it
+  rings nobody.
 - **A result that cannot be bound to a request is dropped, not published.** See
   [what makes a fact verified](#what-makes-a-fact-verified) — an answer with no staff turn behind it,
   or a quote that appears nowhere in the transcript, never becomes a shared fact. The asker is still
