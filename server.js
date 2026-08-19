@@ -137,22 +137,20 @@ app.get('/api/cache-test', async (req, res) => {
     }catch(e){ counter = 'ERROR ' + String(e.message || e); }
 
     /* The other thing worth knowing from a deploy rather than a laptop: whether
-       this host can ask Overpass for a single element. The area search the map
-       runs gets this shared IP rate-limited, and a per-element read is what
-       decides whether OSM listings — about a third of which carry a phone — can
-       be called live or only simulated. */
-    const osmLookup = {};
-    for(const url of OVERPASS_MIRRORS){
-      const host = url.replace(/^https?:\/\//, '').split('/')[0];
+       this host can read one OSM element. Overpass cannot be reached from here
+       at all — all three mirrors refuse even a one-element query — so listing
+       verification uses the OSM API instead, and whether that answers decides
+       whether a third of the map can be called live or only simulated. */
+    let osmLookup = 'not tested';
+    try{
       const t1 = Date.now();
-      try{
-        const rr = await fetch(url, { method: 'POST',
-          body: 'data=' + encodeURIComponent('[out:json][timeout:10];node(1811947573);out tags 1;'),
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          signal: AbortSignal.timeout(8000) });
-        osmLookup[host] = rr.ok ? `OK in ${Date.now() - t1}ms` : 'HTTP ' + rr.status;
-      }catch(e){ osmLookup[host] = String(e.message || e).slice(0, 40); }
-    }
+      const rr = await fetch('https://api.openstreetmap.org/api/0.6/node/643414350.json',
+        { headers: { 'User-Agent': OSM_UA }, signal: AbortSignal.timeout(8000) });
+      const t = rr.ok ? ((((await rr.json()).elements || [])[0] || {}).tags || {}) : {};
+      osmLookup = rr.ok
+        ? `OK — read one element in ${Date.now() - t1}ms (${t.name || 'unnamed'})`
+        : 'HTTP ' + rr.status;
+    }catch(e){ osmLookup = 'FAILED: ' + String(e.message || e).slice(0, 60); }
 
     return res.json({ ...out, roundTripMs: ms, counter, osmLookup,
       verdict: j?.result === 'str:ping' ? 'OK — shared cache is live' : 'WROTE BUT READ BACK WRONG VALUE' });
@@ -1626,25 +1624,32 @@ const calleErrStatus = e =>
    listing carries, and dials what the provider says rather than what the caller
    sent. Cached for a day: this is the same lookup the details panel already
    makes, and a business's number is not news. */
+const OSM_UA = 'local-atlas/1.0 (+https://local-atlas-api.onrender.com; listing verification)';
 const GOOG_PHONE_MASK = 'id,nationalPhoneNumber,internationalPhoneNumber';
 async function listedPhone(place){
   const gid = String((place && place.gid) || '');
   const fsqId = String((place && place.fsqId) || '');
   const osmId = String((place && place.osmId) || '');
   try{
-    /* OSM has no details endpoint, but it does have the element — and asking
-       Overpass for one element by id is a different animal from the area search
-       the map runs, which is what gets this server's shared IP rate-limited.
-       One statement, one object, no radius: cheap enough to be worth trying at
-       the moment somebody actually asks a question, and cached for a day after.
+    /* Not Overpass — the OSM API. Roughly a third of the named OSM places this
+       app shows carry a phone (46 in rural Vermont, 359 in Manhattan), so the
+       alternative to reading them back was cutting all of them out of the
+       feature. Overpass cannot do it from here: measured from this deploy, all
+       three mirrors refuse a *one-element* query, at 429, a timeout and a
+       connection failure respectively. The rate limiting is about the address,
+       not the size of the ask.
 
-       Roughly a third of the named OSM places this app shows carry a phone —
-       46 in rural Vermont, 359 in Manhattan — so the alternative to this was
-       cutting all of them out of the feature. */
+       api.openstreetmap.org is a different service — the authoritative one, in
+       fact, with Overpass derived from it — and it serves a single element by
+       id in about a hundred milliseconds. That is the right shape of request
+       anyway: one object, at the moment somebody asks a question, cached for a
+       day, rather than a search. */
     if(/^[nwr]\d+$/.test(osmId)) return await cached('lp:o:' + osmId, 86400e3, async () => {
       const kind = { n: 'node', w: 'way', r: 'relation' }[osmId[0]];
-      const j = await overpassUpstream(`[out:json][timeout:10];${kind}(${osmId.slice(1)});out tags 1;`);
-      const t = ((j.elements || [])[0] || {}).tags || {};
+      const rr = await fetch(`https://api.openstreetmap.org/api/0.6/${kind}/${osmId.slice(1)}.json`,
+        { headers: { 'User-Agent': OSM_UA }, signal: AbortSignal.timeout(8000) });
+      if(!rr.ok) throw new Error('OSM API ' + rr.status);
+      const t = (((await rr.json()).elements || [])[0] || {}).tags || {};
       return t.phone || t['contact:phone'] || '';
     });
     if(gid && GOOG) return await cached('lp:g:' + gid, 86400e3, async () => {
