@@ -188,19 +188,32 @@ const FSQ_PREMIUM = 'hours,rating';
 const FSQ_WANT_PREMIUM = process.env.FSQ_PREMIUM_FIELDS === '1';
 async function fsqPlaces(category, lat, lon, r){
   const ll = `${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}`;
-  const mkUrl = (fields, withCats) => `${FSQ_BASE}/places/search?ll=${ll}&radius=${r}&limit=50` +
+  /* sort=DISTANCE for the same reason Google ranks by distance — see
+     googPlaces. Foursquare's default is relevance, which from Jersey City
+     filled the Eat tab with Manhattan just as thoroughly: 56 New York entries
+     to 2 Jersey City ones, measured on the deployed host. Fixing only Google
+     would have left more than half the list across the river. */
+  const mkUrl = (fields, withCats, sorted) => `${FSQ_BASE}/places/search?ll=${ll}&radius=${r}&limit=50` +
+    (sorted ? '&sort=DISTANCE' : '') +
     (withCats ? `&fsq_category_ids=${FSQ_CATS[category]}` : '') +
     (fields ? `&fields=${encodeURIComponent(fields)}` : '');
   // widest tier first, each fallback asking for strictly less
-  const tiers = FSQ_WANT_PREMIUM
+  const base = FSQ_WANT_PREMIUM
     ? [[FSQ_CORE + ',' + FSQ_PREMIUM, true], [FSQ_CORE, true], ['', true], ['', false]]
     : [[FSQ_CORE, true], ['', true], ['', false]];
-  const data = await cached('fsqb:' + category + ':' + ll + ':' + r, 6 * 3600e3, async () => {
+  /* The whole ladder sorted, then the whole ladder unsorted. `sort` is the one
+     parameter here this app has never sent before, so if this account's tier or
+     a later API version rejects it, the fallback has to be a relevance-ranked
+     Foursquare and not a missing one — losing the sort costs us the fix on half
+     the results, losing the provider costs the tab most of its entries. */
+  const tiers = [...base.map(t => [...t, true]), ...base.map(t => [...t, false])];
+  // fsqb2: sort changed to DISTANCE; a cached fsqb entry is the old relevance list
+  const data = await cached('fsqb2:' + category + ':' + ll + ':' + r, 6 * 3600e3, async () => {
     // 400 = a field/category id was rejected, 429 = that field tier is spent;
     // both are recoverable by asking for less, so drop fields, not the provider
     let last = 0;
-    for(const [fields, wc] of tiers){
-      const rr = await fetch(mkUrl(fields, wc), { headers: FSQ_HDRS() });
+    for(const [fields, wc, sorted] of tiers){
+      const rr = await fetch(mkUrl(fields, wc, sorted), { headers: FSQ_HDRS() });
       if(rr.ok) return rr.json();
       last = rr.status;
       if(rr.status !== 400 && rr.status !== 429) break;
@@ -299,7 +312,9 @@ async function googPlaces(category, lat, lon, r){
   // gpl2: entries cached before primaryType joined the field mask have no
   // primaryType, so googOffTopic would silently pass everything for 6 h
   // gpl3: entries gained hoursWeek; gpl2 entries have no week to pick from
-  const key = `gpl3:${category}:${(+lat).toFixed(4)},${(+lon).toFixed(4)}:${rad}`;
+  // gpl4: ranking changed from POPULARITY to DISTANCE, so a cached gpl3 entry
+  // is the old across-the-river list under the new key's name
+  const key = `gpl4:${category}:${(+lat).toFixed(4)},${(+lon).toFixed(4)}:${rad}`;
   const data = await cached(key, 6 * 3600e3, async () => {
     /* Google 400s the whole request if any single includedType is unknown to it.
        Trim from the tail rather than collapsing to one type — dropping straight
@@ -312,7 +327,17 @@ async function googPlaces(category, lat, lon, r){
         body: JSON.stringify({
           includedTypes: list,
           maxResultCount: 20,                          // hard API maximum
-          rankPreference: 'POPULARITY',
+          /* 20 is the most Google will return, so ranking decides which 20 —
+             and POPULARITY spends them on whatever is most famous anywhere in
+             the circle. From Jersey City a 7 km circle reaches Midtown, and
+             Manhattan out-populates Jersey City by a mile: the Eat tab came
+             back almost entirely New York, so the town being browsed never
+             made its own list. DISTANCE spends the budget on the place the
+             visitor actually asked about. The cost is real and accepted — the
+             nearest twenty are not the best twenty, and a small town can lead
+             with a gas-station deli over the diner up the road — but a list of
+             the wrong town's best is not a local guide. */
+          rankPreference: 'DISTANCE',
           locationRestriction: { circle: { center: { latitude: +lat, longitude: +lon }, radius: rad } }
         })
       });
@@ -365,15 +390,31 @@ function withDeadline(p, ms, label){
 }
 
 /* Merge providers on normalised name: Google wins ties (fresher hours/ratings),
-   Foursquare fills in whatever Google didn't return. */
+   Foursquare fills in whatever Google didn't return.
+
+   The name alone is not an identity in a metro area. Keyed on name only, the
+   Starbucks in Jersey City and the Starbucks in Manhattan were one entry, and
+   the first list merged won — so every chain the denser side of the river also
+   has quietly deleted the local branch from the results. Distance settles it:
+   two shops of the same name a quarter-mile apart are two shops, and the same
+   shop reported by two providers lands within a few hundred feet of itself.
+   A record with no coordinates keeps the old name-only behaviour, since the
+   name is then all there is to go on. */
 const normName = n => String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
+const SAME_PLACE_MI = 0.15;
+const sameSpot = (a, b) =>
+  [a.lat, a.lon, b.lat, b.lon].every(v => Number.isFinite(+v))
+    ? haversineMi(+a.lat, +a.lon, +b.lat, +b.lon) <= SAME_PLACE_MI
+    : true;
 function mergePlaces(lists){
   const out = [], byName = new Map();
   for(const list of lists){
     for(const it of list){
       const k = normName(it.name);
-      const prev = byName.get(k);
-      if(!prev){ byName.set(k, it); out.push(it); continue; }
+      const bucket = byName.get(k);
+      if(!bucket){ byName.set(k, [it]); out.push(it); continue; }
+      const prev = bucket.find(p => sameSpot(p, it));
+      if(!prev){ bucket.push(it); out.push(it); continue; }
       for(const f of ['website', 'phone', 'hours', 'hoursWeek', 'addr', 'kind', 'fsqId', 'gid']){
         if(!prev[f] && it[f]) prev[f] = it[f];
       }

@@ -1201,7 +1201,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.5</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.6</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -2903,10 +2903,47 @@ function localityOf(it){
   return m ? `${m[1].trim()}, ${m[2]}` : '';
 }
 const crossingOf = it => (state.detour || {})[localityOf(it)];
-const isCrossing = it => {
+const isRatioCrossing = it => {
   const d = crossingOf(it);
   return !!d && d.ratio >= CROSSING_RATIO;
 };
+
+/* ---- the ratio cannot carry this alone ----
+   Measured from Jersey City, every Manhattan locality scores 1.43–1.70: under
+   the threshold, because the Holland Tunnel goes straight there. Edgewater's
+   *same-side* neighbours ran 1.26–1.86. The two ranges overlap, so the gap the
+   threshold sits in is a local fact about Edgewater and not a general one —
+   there is no number that hides Manhattan from Jersey City without also hiding
+   Hoboken. Tuning CROSSING_RATIO trades one town's bug for another's.
+
+   So the town is the second signal. A result in a different town than the one
+   being browsed is a different town's result, whatever the road happens to do.
+   That is not the state filter rejected in server.js: Cherry Hill to
+   Philadelphia crosses a state line and stays one click away, exactly like
+   Hoboken from Jersey City. The claim this makes is only "not the town you
+   asked for", which is checkable from the address and true in both cases.
+
+   Both signals stay, because they answer different questions and each catches
+   what the other misses: an unparseable address leaves the ratio to do its
+   job, and a town with no routing data still hides its neighbours. Unknown on
+   both sides means shown — a visitor whose own locality did not parse is not
+   served by a list with most of it silently missing.
+
+   The test listing is exempt. It exists to be found and dialled, and it is
+   pinned to one set of coordinates that need not be in the town a visitor is
+   looking at; letting this filter bury it would break the CALL-E demo for a
+   tidiness the listing already announces on its face. */
+function originLocality(){
+  const m = String((state.place && state.place.name) || '')
+    .match(/^\s*([^,]+),\s*([A-Za-z]{2})\s*$/);
+  return m ? `${m[1].trim()}, ${m[2].toUpperCase()}` : '';
+}
+const isOtherTown = it => {
+  if(it.demo) return false;
+  const home = originLocality(), loc = localityOf(it);
+  return !!home && !!loc && home.toLowerCase() !== loc.toLowerCase();
+};
+const isCrossing = it => isRatioCrossing(it) || isOtherTown(it);
 
 async function loadDetours(items){
   const place = state.place;
@@ -2939,10 +2976,18 @@ async function loadDetours(items){
   }catch(e){}
 }
 
-/* Appears only when something is actually across a barrier, so the towns where
-   this never happens never see it. Names the places rather than the rule —
-   "across a bridge or tunnel" is the fact; "detour ratio 3.8" is our reasoning
-   and nobody's business. */
+/* Appears only when something was actually set aside, so the towns where this
+   never happens never see it. Names the places rather than the rule — the towns
+   are the fact; "detour ratio 3.8" is our reasoning and nobody's business.
+
+   The label says "other towns" and not "bridge crossings" because that is now
+   the smaller half of what this holds back. Naming the home town is the honest
+   version: a button reading "Only Jersey City" says what the list is, and what
+   pressing it would let back in, without claiming a bridge that may not exist.
+
+   The routing credit rides on whether routing actually decided something. A
+   round where every entry was set aside on its address alone owes OSRM no
+   attribution, and printing one would credit a source that had no say. */
 function crossingRowHTML(crossings){
   if(!crossings || !crossings.length) return '';
   const towns = [...new Set(crossings.map(localityOf))]
@@ -2950,14 +2995,17 @@ function crossingRowHTML(crossings){
   const where = towns.length <= 2 ? towns.join(' and ')
               : `${towns[0]} and ${towns.length - 1} other places`;
   const on = state.hideCrossings !== false;
-  return `<div class="filterrow crossrow" role="group" aria-label="Places across a bridge or tunnel">
+  const home = originLocality().replace(/,\s*[A-Z]{2}$/, '');
+  const label = home ? `Only ${home}` : 'Skip other towns';
+  const routed = crossings.some(isRatioCrossing);
+  return `<div class="filterrow crossrow" role="group" aria-label="Places in other towns">
       <button class="crossbtn" aria-pressed="${on}"
-        title="Reaching these means a bridge or a tunnel — the drive is far longer than the map suggests">
-        ${on ? '✓ ' : ''}Skip bridge crossings</button>
+        title="These are in another town than the one you're looking at — some of them across a bridge or a tunnel">
+        ${on ? '✓ ' : ''}${esc(label)}</button>
       <span class="crossnote">${on ? '+' : ''}${crossings.length} in ${esc(where)}${on ? ' hidden' : ' shown'}</span>
-    </div>
+    </div>` + (routed ? `
     <div class="sec-note crossattr"><a href="https://project-osrm.org/" target="_blank" rel="noopener">OSRM</a> ·
-      &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>`;
+      &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div>` : '');
 }
 
 /* The list and the map are one view: the expanded place gets a ring on the
@@ -3006,7 +3054,7 @@ function drawPOIs(kind){
   if(state.poiOpenOnly)
     items = items.filter(i=> openState(i) === true);
   /* Hidden by default, but only ever counted against what survived the other
-     filters — a chip offering "+57 across a bridge" has to mean 57 things you
+     filters — a chip offering "+57 in New York" has to mean 57 things you
      would otherwise be looking at right now. */
   const crossings = items.filter(isCrossing);
   if(crossings.length && state.hideCrossings !== false)
@@ -3039,7 +3087,8 @@ function drawPOIs(kind){
   if(state.poiFilter) active.push(state.poiFilter);
   if(state.poiSearch) active.push(`“${state.poiSearch}”`);
   if(state.poiOpenOnly) active.push('Open now');
-  if(crossings.length && state.hideCrossings !== false) active.push('No bridges');
+  if(crossings.length && state.hideCrossings !== false)
+    active.push(originLocality() ? `Only ${originLocality().replace(/,\s*[A-Z]{2}$/, '')}` : 'This town only');
 
   let html = `
     <details class="filters"${state.filtersOpen ? ' open' : ''}>
