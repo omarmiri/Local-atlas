@@ -1201,7 +1201,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.8</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.9</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -3673,24 +3673,53 @@ function factsPaneHTML(it, idx, faq, chips){
    The filter is deliberately strict — a callable number, not the anchor, not
    known-closed, same kind — because every place that survives it is a real
    phone that will ring. */
+/* ---- what counts as the same kind ----
+   `kind` is a provider's free-text label, and the two providers describe the
+   same street differently: Google says "pizza restaurant" where Foursquare says
+   "pizzeria", "hamburger restaurant" against "burger joint", "coffee shop"
+   against "café". Both spellings sit in one Jersey City list today. Comparing
+   the strings exactly would offer a round of pizza places that skipped half the
+   pizza places on the tab.
+
+   So a label is reduced to its subject: the trailing generic noun comes off
+   ("pizza restaurant" -> "pizza", "donut shop" -> "donut") and a short synonym
+   table settles the pairs the two vocabularies simply spell differently.
+
+   It is deliberately small. Anything cleverer would be guessing at whether a
+   Taiwanese restaurant and a Chinese one answer the same question, and that
+   guess would be made on the visitor's behalf about a stranger's phone. */
+const KIND_GENERIC = /\s+(restaurant|joint|shop|spot|place|house|stand|truck)$/;
+const KIND_SYNONYM = { pizzeria:'pizza', 'café':'cafe', coffee:'cafe',
+                       hamburger:'burger', taqueria:'taco' };
+function kindKey(k){
+  let s = String(k || '').toLowerCase().trim().replace(/^new\s+/, '');
+  const stripped = s.replace(KIND_GENERIC, '');
+  if(stripped) s = stripped;                  // "bar" must not reduce to nothing
+  return KIND_SYNONYM[s] || s;
+}
+
+/* The round is the same question put to comparable places, so the neighbours
+   are the nearest of the anchor's own kind and nothing else. This used to top
+   the list up from the rest of the tab when too few shared a kind, which made
+   the feature reliably available and quietly changed the question: "which of
+   these three has the shortest wait" is not a comparison worth placing calls
+   for when one of the three is a hardware store on the pizza tab.
+
+   Two is the most a round can hold beside the anchor, one is a comparison, and
+   none means there is nothing here to compare — the caller says so rather than
+   substituting a place the visitor did not mean. An anchor with no kind at all
+   is in the same position: without a category there is no "same category" to
+   honour, and inventing one would be the same substitution by another route. */
 function nearbyPeers(it, limit = 2){
-  const byDist = list => list
+  const key = kindKey(it.kind);
+  if(!key) return [];
+  return (state.currentPOIs || [])
+    .filter(p => p !== it && p.phone && canAsk(p) && openState(p) !== false
+              && kindKey(p.kind) === key)
     .map(p => ({ p, d: haversine(it.lat, it.lon, p.lat, p.lon) }))
     .sort((a, b) => a.d - b.d)
+    .slice(0, limit)
     .map(x => ({ ...x.p, _dist: x.d }));
-
-  const pool = (state.currentPOIs || [])
-    .filter(p => p !== it && p.phone && canAsk(p) && openState(p) !== false);
-  /* Same kind first, because "which of these three" only means anything among
-     comparable places. But `kind` is a provider's free-text label — "Italian
-     Restaurant" and "Restaurant" are the same street to a hungry person and two
-     different strings here — so an exact match alone would leave the feature
-     invisible on most listings. The rest of the tab, which is already a
-     category, tops it up; every name is shown and confirmed before anything
-     rings, so a loose neighbour costs a glance, not a call. */
-  const same = pool.filter(p => (p.kind || '') === (it.kind || ''));
-  const rest = pool.filter(p => !same.includes(p));
-  return [...byDist(same), ...byDist(rest)].slice(0, limit);
 }
 
 const peerDist = d => d < 0.2 ? 'next door' : d.toFixed(1) + ' mi away';
@@ -3727,9 +3756,9 @@ function privatePaneHTML(it, idx, priv, chips){
         ${peers.length ? `
         <label class="priv-round" data-on="${round ? 1 : 0}">
           <input type="checkbox" name="round"${round ? ' checked' : ''}>
-          <span><b>Ask ${peers.length} nearby ${peers.length === 1 ? 'place' : 'places'} the same thing</b>
-            <span>One call task, ${peers.length + 1} lines, and the answers side by side —
-              ${peers.map(p=>esc(p.name) + ' (' + peerDist(p._dist) + ')').join(', ')}.
+          <span><b>Ask the ${peers.length} nearest ${peers.length === 1 ? 'place' : 'places'} of the same kind</b>
+            <span>${esc(it.kind || 'Same kind')} — one call task, ${peers.length + 1} lines, and the
+              answers side by side: ${peers.map(p=>esc(p.name) + ' (' + peerDist(p._dist) + ')').join(', ')}.
               Uses ${peers.length + 1} of today's call budget.</span></span>
         </label>` : ''}
         <div class="priv-disc">
@@ -4411,7 +4440,9 @@ contentEl.addEventListener('submit', ev=>{
   const wantsRound = !!(form.elements.round && form.elements.round.checked);
   if(wantsRound){
     const peers = nearbyPeers(it);
-    if(!peers.length) return askError(box, 'No nearby place of the same kind has a callable number right now.');
+    if(!peers.length) return askError(box, it.kind
+      ? `No other ${it.kind} nearby has a callable number right now.`
+      : 'No nearby place of the same kind has a callable number right now.');
     return submitRound(it, box, idx, [it, ...peers], { ...ask, _label: q });
   }
   submitAsk(it, box, idx, { isPrivate: true, ...ask, _label: q });
