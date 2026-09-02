@@ -1201,7 +1201,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.6</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.7</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -2595,7 +2595,14 @@ function getAllPOIs(){
   if(state.cache[key]) return state.cache[key];        // promise shared by all tabs
   const { lat, lon } = state.place;
   const token = state.reqToken;
-  const lsKey = `poiv7:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
+  /* poiv8: the lists cached under poiv7 were collected when both providers
+     ranked the whole circle, so a Jersey City entry holds ~2 local places and
+     ~56 New York ones. The town filter then hides the 56 and leaves a bustling
+     city showing four restaurants — the stored list is not merely stale, it is
+     the exact shape the filter was built to remove. A visitor should not have
+     to wait out a 24 h cache for a fix, so the key moves and the old entry is
+     abandoned where it lies. */
+  const lsKey = `poiv8:${lat.toFixed(3)},${lon.toFixed(3)}:${state.radiusM}`;
   const save = b => { try{ localStorage.setItem(lsKey, JSON.stringify({ t:Date.now(), b })); }catch(e){} };
   const promise = (async ()=>{
     // warm local cache: same spot + radius within 24 h loads instantly

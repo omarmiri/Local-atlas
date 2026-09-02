@@ -1499,6 +1499,11 @@ app.get('/api/layer-test', async (req, res) => {
     try{
       const rr = await fetch(url, opts);
       out[name] = { status: rr.status, type: rr.headers.get('content-type') };
+      /* A status alone cannot tell "this parameter is unsupported" from "this
+         key is spent", and both arrive as 400. The upstream says which in the
+         body, so a failing probe carries the first of it — the reason is the
+         only part of a failure worth having. */
+      if(!rr.ok) out[name].body = (await rr.text().catch(() => '')).slice(0, 300);
     }catch(e){ out[name] = { error: String(e.message || e) }; }
   };
   const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
@@ -1508,6 +1513,12 @@ app.get('/api/layer-test', async (req, res) => {
     probe('gibs_fires', `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_Thermal_Anomalies_375m_All/default/${yesterday}/GoogleMapsCompatible_Level8/4/5/4.png`),
     OWM ? probe('owm_clouds', `https://tile.openweathermap.org/map/clouds_new/4/4/5.png?appid=${OWM}`) : Promise.resolve(out.owm_clouds = { error: 'no key' }),
     FSQ ? probe('fsq_search', `${FSQ_BASE}/places/search?ll=42.33%2C-83.05&radius=1000&limit=1`, { headers: FSQ_HDRS() }) : Promise.resolve(out.fsq_search = { error: 'no key' }),
+    /* fsqPlaces asks for sort=DISTANCE and falls back to an unsorted request if
+       that is refused — which keeps the provider alive but silently returns the
+       relevance list, and relevance from Jersey City means Gramercy Tavern. The
+       fallback is right; being unable to see it fire is not. This probe is the
+       difference between the two, and it is the reason it is checked here. */
+    FSQ ? probe('fsq_sort_distance', `${FSQ_BASE}/places/search?ll=42.33%2C-83.05&radius=1000&limit=1&sort=DISTANCE`, { headers: FSQ_HDRS() }) : Promise.resolve(out.fsq_sort_distance = { error: 'no key' }),
     GOOG ? probe('google_search', `${GOOG_BASE}/places:searchNearby`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOG, 'X-Goog-FieldMask': 'places.id,places.displayName' },
