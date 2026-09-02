@@ -1201,7 +1201,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.9</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.10</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -3733,6 +3733,38 @@ function privatePaneHTML(it, idx, priv, chips){
   const peers = SIGNED_IN() ? nearbyPeers(it) : [];
   const round = !!it._round && peers.length >= 1;
 
+  /* ---- the example question comes from the place ----
+     The placeholder used to be one fixed sentence about sensory play equipment
+     and an accessible restroom. Beside a playground that is a good example;
+     beside a pizzeria it is nonsense, and it was the only part of this pane
+     that had not heard of the place it was sitting on.
+
+     The suggestions are already here and already specific — suggestQuestions()
+     has Gemini write them against this business's name, type, cuisine and
+     price band — so the example is drawn from them rather than invented again,
+     and no second model call is made to fill in a grey hint.
+
+     It is taken out of the chip row rather than copied from it: an example the
+     visitor can also click two inches above reads as a bug. The first is the
+     one taken, because the model front-loads its most specific question and
+     the placeholder is the one sentence shown without anybody clicking
+     anything. Measured on this deploy, Razza's first suggestion asks about
+     reservations on Grove Street while its last asks about street parking —
+     the chips can afford the weaker one, the empty box cannot.
+
+     A lone suggestion is left where it is and the box falls back: one chip is
+     worth more clickable than quoted, and taking it would trade a button for a
+     grey hint saying the same words.
+
+     With nothing suggested — a keyless deploy, or every suggestion already
+     answered on the public side — the fallback says what a good question is
+     instead of showing one. Naming any specific thing to ask would be the
+     original bug again: an example from the wrong kind of place is worse than
+     no example. */
+  const example = chips.length > 1 ? chips[0].text
+                                   : 'Ask one factual question whoever picks up the phone could answer.';
+  const pchips = chips.length > 1 ? chips.slice(1) : chips;
+
   return `
     <div class="ask-sec">
       <h5>Call ahead for me</h5>
@@ -3744,14 +3776,14 @@ function privatePaneHTML(it, idx, priv, chips){
         to the public listing.</span>
     </div>
     ${!SIGNED_IN() ? signInPrompt('A private call') : `
-      ${chips.length ? `<div class="ask-chips priv-chips">` +
-        chips.map(s=>`<button type="button" data-pq="${esc(s.text)}">${esc(s.text)}</button>`).join('') +
+      ${pchips.length ? `<div class="ask-chips priv-chips">` +
+        pchips.map(s=>`<button type="button" data-pq="${esc(s.text)}">${esc(s.text)}</button>`).join('') +
         `</div>` : ''}
       <form class="priv-form">
         <div class="priv-q">
           <span class="field-label">What should we ask?</span>
           <textarea name="q" maxlength="240"
-            placeholder="Is the sensory play equipment working today, and is the accessible restroom nearby open?">${esc(it._q || '')}</textarea>
+            placeholder="${esc(example)}">${esc(it._q || '')}</textarea>
         </div>
         ${peers.length ? `
         <label class="priv-round" data-on="${round ? 1 : 0}">
