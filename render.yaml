@@ -7,6 +7,15 @@ services:
     envVars:
       - key: GOOGLE_API_KEY
         sync: false
+      # Basemap tiles, proxied through /api/basemap-tile so the key stays off
+      # the client. CARTO now watermarks keyless tiles with "API KEY REQUIRED"
+      # baked into the image. BASEMAP_PROVIDER is stadia (default) or carto;
+      # with no key set, the server falls back to keyless Esri, which only
+      # tiles to zoom 16.
+      - key: BASEMAP_API_KEY
+        sync: false
+      - key: BASEMAP_PROVIDER
+        value: stadia
       - key: FSQ_API_KEY
         sync: false
       # CALL-E "Ask the Place". CALLE_WEBHOOK_TOKEN is any long random string:

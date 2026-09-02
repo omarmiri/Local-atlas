@@ -29,6 +29,8 @@ const OWM = process.env.OPENWEATHER_API_KEY || '';
 const NPS = process.env.NPS_API_KEY || '';
 const WINDY = process.env.WINDY_API_KEY || '';
 const NASA = process.env.NASA_API_KEY || '';
+const BASEMAP = process.env.BASEMAP_API_KEY || '';
+const BASEMAP_PROVIDER = (process.env.BASEMAP_PROVIDER || 'stadia').toLowerCase();
 const AI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';  // cheapest tier, auto-tracks latest
 
 /* ---- two-level TTL cache: in-memory L1, optional Upstash Redis L2 ----
@@ -99,6 +101,10 @@ async function cached(key, ttlMs, fn){
    differently. */
 app.get('/api/health', (req, res) => res.json({ ok: true, fsq: !!FSQ, goog: !!GOOG, tm: !!TM, ai: !!AI, owm: !!OWM,
   redis: redisState.configured && redisState.ok !== false, nps: !!NPS, windy: !!WINDY, nasa: !!NASA,
+  /* Named, not a boolean: the basemap can be serving fine on the keyless
+     fallback, which is not the same as being configured. A bare true here is
+     what let a watermarked map sit behind an all-green health check. */
+  basemap: activeBasemap()[0],
   calle: require('./calle').info(), auth: require('./auth').info() }));
 
 /* Forces a real Upstash round-trip and reports the truth. Use this rather than
@@ -1391,6 +1397,57 @@ app.get('/api/gibs-tile', async (req, res) => {
       throw new Error('GIBS unavailable');
     });
     res.type(L.ext === 'jpg' ? 'image/jpeg' : 'image/png').send(buf);
+  }catch(e){ res.status(502).send(''); }
+});
+
+/* ---- basemap tile proxy ----
+   CARTO began requiring an API key on basemaps.cartocdn.com and enforces it by
+   printing "API KEY REQUIRED" *into the tile image* — a 200 with valid PNG
+   bytes, so nothing client-side can detect it and /api/health, which only ever
+   knew about our own keys, stayed all-green. The key lives here rather than in
+   index.html so it is never handed to a visitor.
+
+   Deliberately NOT run through cached(): a single pan pulls ~20 tiles, and
+   pushing basemap blobs into the shared Upstash L2 would evict the place data
+   it exists to hold. Tiles are immutable, so a long Cache-Control lets the
+   browser (and Render's edge) do that job for free. */
+const BASEMAPS = {
+  stadia: { url: (z, x, y, r) => `https://tiles.stadiamaps.com/tiles/alidade_smooth/${z}/${x}/${y}${r}.png?api_key=${BASEMAP}`,
+            type: 'image/png', maxNativeZoom: 20, needsKey: true,
+            attribution: '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' },
+  carto:  { url: (z, x, y, r) => `https://basemaps.cartocdn.com/light_all/${z}/${x}/${y}${r}.png?api_key=${BASEMAP}`,
+            type: 'image/png', maxNativeZoom: 19, needsKey: true,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>' },
+  /* Keyless fallback so a deploy without BASEMAP_API_KEY still shows a map.
+     Esri's cache stops at z16 — past that it serves a grey "Map data not yet
+     available" tile, hence the lower maxNativeZoom the client reads back. */
+  esri:   { url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/${z}/${y}/${x}`,
+            type: 'image/jpeg', maxNativeZoom: 16, needsKey: false,
+            attribution: 'Tiles &copy; <a href="https://www.esri.com/">Esri</a> &mdash; Esri, DeLorme, NAVTEQ' }
+};
+function activeBasemap(){
+  const want = BASEMAPS[BASEMAP_PROVIDER];
+  return (want && (!want.needsKey || BASEMAP)) ? [BASEMAP_PROVIDER, want] : ['esri', BASEMAPS.esri];
+}
+/* The client asks once at boot instead of hardcoding a provider, so switching
+   BASEMAP_PROVIDER is an env-var change and maxNativeZoom follows along. */
+app.get('/api/basemap', (req, res) => {
+  const [name, b] = activeBasemap();
+  res.json({ provider: name, maxNativeZoom: b.maxNativeZoom, attribution: b.attribution,
+    keyed: b.needsKey, url: '/api/basemap-tile?z={z}&x={x}&y={y}&r={r}' });
+});
+app.get('/api/basemap-tile', async (req, res) => {
+  try{
+    const { z, x, y } = req.query;
+    if(![z, x, y].every(v => /^\d+$/.test(String(v)))) throw new Error('bad coords');
+    const r = req.query.r === '@2x' ? '@2x' : '';
+    const [, b] = activeBasemap();
+    if(Number(z) > b.maxNativeZoom) throw new Error('above max native zoom');
+    const rr = await fetch(b.url(z, x, y, r));
+    if(!rr.ok) throw new Error('tile HTTP ' + rr.status);
+    res.type(b.type)
+       .set('Cache-Control', 'public, max-age=604800, immutable')   // 7 days; tiles are immutable
+       .send(Buffer.from(await rr.arrayBuffer()));
   }catch(e){ res.status(502).send(''); }
 });
 

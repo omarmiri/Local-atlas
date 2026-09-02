@@ -1201,7 +1201,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.4</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.5</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -1868,10 +1868,23 @@ function renderAcct(){
 /* ---------------- map ---------------- */
 const map = L.map('map', { zoomControl:false }).setView([45.5, -96.5], 4);
 L.control.zoom({ position:'bottomright' }).addTo(map);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-  attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-  maxZoom:19
-}).addTo(map);
+/* Basemap tiles come from our own origin. CARTO started stamping "API KEY
+   REQUIRED" into the tile images themselves, which no amount of client-side
+   error handling can see, so the key now lives on the server and /api/basemap
+   tells us which provider answered and how far it tiles. */
+(async () => {
+  let cfg = { url:'/api/basemap-tile?z={z}&x={x}&y={y}&r={r}', maxNativeZoom:19,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' };
+  try{
+    const r = await fetch('/api/basemap');
+    if(r.ok) cfg = { ...cfg, ...await r.json() };
+  }catch(e){}                      // fall through to the defaults above
+  L.tileLayer(cfg.url, {
+    attribution: cfg.attribution,
+    maxZoom: 19,
+    maxNativeZoom: cfg.maxNativeZoom  // upscale rather than request tiles the provider lacks
+  }).addTo(map);
+})();
 
 const hereIcon = L.divIcon({ className:'here-pin', iconSize:[18,18] });
 const townIcon = L.divIcon({ className:'town-pin', iconSize:[12,12] });
