@@ -183,6 +183,9 @@ const FSQ_CATS = {
    a Chicago lookup, supplies ~3x more places than Google plus website/phone on
    nearly all of them. Google supplies the ratings, so we don't ask for the
    premium tier unless FSQ_PREMIUM_FIELDS=1 says the quota is worth spending. */
+/* The radius of the second, close-in Foursquare pass. About a mile: wide
+   enough to hold a downtown, tight enough that fifty results cannot escape it. */
+const FSQ_NEAR_M = 1500;
 const FSQ_CORE = 'fsq_place_id,name,latitude,longitude,location,categories,distance,website,tel';
 const FSQ_PREMIUM = 'hours,rating';
 const FSQ_WANT_PREMIUM = process.env.FSQ_PREMIUM_FIELDS === '1';
@@ -478,7 +481,25 @@ app.get('/api/places', async (req, res) => {
        The losing request still finishes into the cache, so it isn't wasted. */
     const jobs = [];
     if(GOOG && want('google')) jobs.push(withDeadline(googPlaces(category, lat, lon, r), 10000, 'Google Places'));
-    if(FSQ && want('fsq'))     jobs.push(withDeadline(fsqPlaces(category, lat, lon, r), 6000, 'Foursquare'));
+    if(FSQ && want('fsq')){
+      jobs.push(withDeadline(fsqPlaces(category, lat, lon, r), 6000, 'Foursquare'));
+      /* Foursquare returns at most 50 for a circle and chooses them by
+         relevance over the whole circle. sort=DISTANCE is accepted by the
+         2025-06-17 API — /api/layer-test probes it and it answers 200 — and
+         does not change which 50 come back, only how the page is ordered,
+         which is moot here because mergePlaces re-sorts by distance anyway.
+         Measured from Jersey City, the wide search spent 46 of its 50 on
+         Manhattan and Brooklyn and returned four local places.
+
+         A second, tighter circle is how you buy the town itself: the same
+         50-place budget over an area small enough that spending it locally is
+         the only thing it can do. It is a Foursquare request rather than a
+         Google one because coverage is what this provider is here for and its
+         core search is the cheap half of the pair. Skipped when the radius is
+         already near this size, where it would ask the same question twice. */
+      if(r > FSQ_NEAR_M * 1.5)
+        jobs.push(withDeadline(fsqPlaces(category, lat, lon, FSQ_NEAR_M), 6000, 'Foursquare (near)'));
+    }
     if(!jobs.length) return res.status(503).json({ error: 'provider not configured' });
     const settled = await Promise.allSettled(jobs);
     const lists = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
