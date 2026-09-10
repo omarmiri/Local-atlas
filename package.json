@@ -4,7 +4,8 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/questions.test.js test/phone.test.js test/identity.test.js test/calling-window.test.js test/script.test.js test/binding.test.js test/rounds.test.js"
   },
   "engines": {
     "node": ">=18"

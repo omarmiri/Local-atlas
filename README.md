@@ -2,6 +2,8 @@
 
 **Know what's nearby. Verify what matters.**
 
+[![tests](https://github.com/omarmiri/local-atlas/actions/workflows/test.yml/badge.svg)](https://github.com/omarmiri/local-atlas/actions/workflows/test.yml)
+
 A local-exploration web app for any US or Canadian location. Pick a place — by ZIP,
 Canadian postal code, city name, "use my location," or by tapping anywhere on the map —
 and get a zoomed-in view with weather, radar, alerts, news, events, places to eat/shop/see,
@@ -399,6 +401,32 @@ The shared list has exactly one gate: `publish()` will not write to a place's pu
 the result is marked bound *and* the call it came from completed. Both the webhook and the poll go
 through it, and so does the simulator. Losing an answer costs the asker a retry. Publishing an
 unbound one costs the claim every other entry on the page depends on.
+
+## Tests
+
+Every safety rule above is covered by a test. `npm test` runs them in about a
+second, with **no credentials, no network and no dependencies** — the suite
+imports `calle.js` and exercises the exported functions directly, and
+`store.js` falls back to an in-memory map when Upstash is unconfigured.
+
+```bash
+npm test
+```
+
+98 tests across seven files, each one asserting a claim this README makes:
+
+| File | What it holds the code to |
+|---|---|
+| `test/questions.test.js` | Opinions, compound questions, account-specific asks, abuse and prompt injection are refused at the door — and the sanitiser runs first, so a rule split across newlines is still caught. |
+| `test/phone.test.js` | Provider display formats all normalise to one E.164 number, extensions dial the trunk, emergency codes cannot survive normalisation, and only US and Canadian non-premium numbers are dialable — including that 976 as an *area code* is not premium rate. |
+| `test/identity.test.js` | A renamed business keeps its facts, each provider has its own namespace, and a listing naming two sources gets a key of its own rather than either of theirs. |
+| `test/calling-window.test.js` | Nothing is dialled outside 10:00–20:00 **local to the callee**. The clock is frozen, so the test proves the rule rather than reporting what time the suite ran: at 15:00 UTC, New York is inside the window and Vancouver and Honolulu are not. |
+| `test/script.test.js` | The disclosure is unconditional and always precedes the question, the agent may never deny being AI, it asks one question, never guesses, books nothing, and leaves no voicemail. Every question template passes the same validation a typed one does. |
+| `test/binding.test.js` | The publish bindings, one refusal per axis — call id, terminal status, task fingerprint, `metadata.app`, place key, question hash, visibility, and the dialled number. Plus the evidence rule: an answer not traceable to a staff turn is downgraded to `unclear`, never published. |
+| `test/rounds.test.js` | A comparison round names no business in its script, rule 16 forbids hinting that anyone else is being called, a round is private by construction, the recipient mapping must be the list we sent, and a verdict naming a business this round did not call — or one that never answered — is dropped rather than shown. |
+
+The tests are read-only: they add `test/` and an `npm test` script and change no
+application code.
 
 ## Webhooks are untrusted input
 
