@@ -257,16 +257,9 @@
   .ask-live{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--ink);padding:4px 0}
   .ask-mode{
     font-family:'IBM Plex Mono',monospace;font-size:.6rem;line-height:1.6;
-    color:var(--ink-soft);margin-top:9px;padding-top:8px;border-top:1px solid var(--line);
+    color:var(--ink);margin-top:9px;padding-top:8px;border-top:1px solid var(--line);
   }
-  .ask-mode.live{color:var(--ink)}
-  .ask-mode.live strong{color:var(--alert)}
-  .ask-mode button{
-    border:1px solid var(--line);background:transparent;color:var(--sign-green);
-    font-family:'IBM Plex Mono',monospace;font-size:.6rem;
-    border-radius:99px;padding:1px 8px;cursor:pointer;white-space:nowrap;
-  }
-  .ask-mode button:hover{border-color:var(--sign-green)}
+  .ask-mode strong{color:var(--alert)}
   .ask-confirm{
     margin-top:9px;padding:9px 10px;border-radius:9px;
     border:1.5px solid var(--alert);background:var(--surface);
@@ -1201,7 +1194,7 @@
   </div>
   <div class="panel-head">
     <div class="head-top">
-      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.11</span></div>
+      <div class="brand"><h1>Local Atlas</h1><span>US · CA</span><span class="ver">v10.12</span></div>
       <div>
         <button class="acct-btn" id="acctBtn" hidden>Sign in</button>
         <button class="hide-btn" id="themeToggle" aria-label="Toggle dark mode" title="Dark mode">◐</button>
@@ -1532,10 +1525,10 @@ function signInWithGoogle(){
 }
 
 /* Which providers this project actually has enabled. Asked rather than assumed
-   for the same reason the panel only offers the real-call unlock when a code is
-   configured: a "Continue with Google" button on a project without Google is a
-   door with nothing behind it, and the failure lands on a Supabase error page
-   well away from anything that could explain itself. */
+   for the same reason the panel only offers the ask when CALL-E can actually
+   dial: a "Continue with Google" button on a project without Google is a door
+   with nothing behind it, and the failure lands on a Supabase error page well
+   away from anything that could explain itself. */
 async function loadProviders(){
   const a = state.auth;
   if(!a) return {};
@@ -3406,7 +3399,10 @@ async function scanDeals(it, box){
    failed calls are rendered honestly instead of dropped, since "we called and
    they weren't sure" is a real answer and hiding it would misrepresent what the
    app actually knows. */
-const ASK_CODE_KEY = 'atlasAskCode';
+/* The real-call code is gone, and so is the only thing that read this key.
+   Clearing it means a browser that unlocked back when there was something to
+   unlock is not left carrying the code around. */
+try{ localStorage.removeItem('atlasAskCode'); }catch(e){}
 /* openNow and hours ride along so the server can decline to dial a business
    that is closed — see the courtesy window in calle.js. */
 const askPlaceBody = it => ({
@@ -3433,24 +3429,10 @@ function canAsk(it){
   return (String(it.phone).replace(/\D/g, '').length >= 10);
 }
 
-/* A code is only ever stored after /api/ask-access has confirmed it, so its
-   presence is the unlocked state. The server re-checks it on every ask
-   regardless — this just decides what the panel says it is about to do. */
-function askCode(){
-  try{ return localStorage.getItem(ASK_CODE_KEY) || ''; }catch(e){ return ''; }
-}
-const askLive = () => !!askCode() && !!(state.calle && state.calle.realCalls);
-
-/* Two independent credentials, and they answer different questions. The bearer
-   token says who is asking — required for anything that can spend a credit.
-   The access code says whether a real phone may ring, which is a property of
-   the deploy rather than of the person. Neither substitutes for the other. */
-async function askHeaders(){
-  const h = await authHeaders({ 'content-type': 'application/json' });
-  const code = askCode();
-  if(code) h['x-atlas-access'] = code;
-  return h;
-}
+/* One credential now. The bearer token says who is asking, and being signed
+   in is the whole permission: there is no second code deciding whether a real
+   phone may ring, because every call is a real one. */
+const askHeaders = () => authHeaders({ 'content-type': 'application/json' });
 
 function relDay(ts){
   const days = Math.floor((Date.now() - ts) / 86400e3);
@@ -3600,8 +3582,8 @@ const HAS_ACCOUNTS = () => !!state.auth;
 /* Review mode is a deploy with no identity provider at all, where the server
    runs call requests as a fixed local reviewer. Asking that person to sign in
    would be asking them to sign in to nothing, so the ask form is shown. It
-   cannot reach a real call: the server only enables it when there is no
-   CALL-E key, and without a key every call is simulated. */
+   cannot reach a real call: the server only enables it on a deploy with no
+   CALL-E key, where canAsk() reports the feature unconfigured anyway. */
 const SIGNED_IN = () => !!state.user || !!state.reviewMode;
 
 function renderAsk(it, box, idx){
@@ -3858,20 +3840,14 @@ function refreshOpenAskPanels(){
   });
 }
 
-/* The panel always states which of the two things the next click will do. The
-   distinction between a simulated answer and a real phone ringing in someone's
-   shop is the most important fact on this card, so it is never implicit. */
+/* A real phone ringing in someone's shop is the most important fact on this
+   card, so it is never implicit. There used to be two things the next click
+   could do, and this line said which; now there is one, and it says so in the
+   same place, in the same words it used for the live case. */
 function askModeHTML(it){
-  if(askLive())
-    return `<div class="ask-mode live">
-        <strong>Real calls unlocked.</strong> Asking will place an actual phone call to
-        ${esc(it.name)}, and you'll see the exact question first.
-        <button class="ask-lock">Back to simulation</button>
-      </div>`;
-  const canUnlock = state.calle && state.calle.realCalls;
   return `<div class="ask-mode">
-      Simulation mode — no phone is dialled and the answers here are generated for testing.
-      ${canUnlock ? `<button class="ask-unlock">Use a real call</button>` : ''}
+      <strong>This places a real call.</strong> Asking will ring
+      ${esc(it.name)}, and you'll see the exact question first.
     </div>`;
 }
 
@@ -4138,9 +4114,10 @@ function liveNote(box, text, sub, overlay){
 }
 const clearLiveNote = box => box.querySelectorAll('.ask-live').forEach(n=>n.remove());
 
-/* One slot below the form carries both rejections and the unlock prompt; `calm`
-   drops the red so asking for a code doesn't read as an error. */
-function askError(box, msg, offerCode, calm){
+/* One slot below the form carries every rejection; `calm` drops the red for
+   the ones that are information rather than failure — a question answered
+   already, a place dropped from a round. */
+function askError(box, msg, calm){
   // an error ends whatever was in progress, so nothing should still be spinning
   clearLiveNote(box);
   hideCallOverlay();
@@ -4148,14 +4125,7 @@ function askError(box, msg, offerCode, calm){
   if(!el) return;
   el.hidden = false;
   el.classList.toggle('calm', !!calm);
-  el.innerHTML = esc(msg) + (offerCode
-    ? `<form class="ask-form" style="margin-top:6px">
-         <input name="code" placeholder="Real-call code" aria-label="Real-call code"
-                inputmode="numeric" autocomplete="off">
-         <button type="submit">Unlock</button>
-       </form>` : '');
-  const f = el.querySelector('input');
-  if(f) f.focus();
+  el.textContent = msg;
 }
 
 /* Re-issues a request whose response we lost, purely to learn what became of
@@ -4184,13 +4154,12 @@ async function submitAsk(it, box, idx, payload){
      and a dead button for that long is how someone concludes it didn't work
      and clicks again.
 
-     Whether it says "placing a call" depends on whether this request can
-     actually place one. With real calls unlocked the first press only fetches
-     the preview and comes back with the confirmation gate, so the ringing
-     phone would appear, vanish, and then appear again for the real thing.
-     Mirrors the server's own test: it dials on an unconfirmed request only
-     when the call would be simulated. */
-  const willDial = ask.confirmed === true || !askLive();
+     Only the confirmed leg says "placing a call", because only the confirmed
+     leg dials. The first press fetches the preview and comes back with the
+     confirmation gate, so a ringing phone shown here would appear, vanish,
+     and appear again for the real thing. Mirrors the server, which refuses an
+     unconfirmed request outright. */
+  const willDial = ask.confirmed === true;
   liveNote(box, willDial ? 'Placing the call…' : 'Checking the question…',
     it.name, willDial);
 
@@ -4207,16 +4176,15 @@ async function submitAsk(it, box, idx, payload){
     if(btn) btn.disabled = false;
     // the server will not dial until it has been told the preview was seen
     if(r.status === 428 && j.needsConfirm) return renderConfirm(it, box, idx, ask, j.preview);
-    /* Two different 401s reach here. auth_required means nobody is signed in,
-       which the sign-in sheet fixes; anything else is the real-call code, which
-       the inline unlock form fixes. Offering the wrong one is a dead end. */
-    if(r.status === 401 && j.code === 'auth_required'){
-      askError(box, 'Sign in to request a call.', false, true);
-      return openAcct();
+    /* Being signed in is the whole permission now, so every 401 here means the
+       same thing and the sign-in sheet is always the answer to it. */
+    if(r.status === 401){
+      askError(box, j.error || 'Sign in to request a call.', true);
+      if(j.code === 'auth_required') return openAcct();
+      return;
     }
     if(r.status === 503 && j.code === 'auth_unconfigured')
       return askError(box, j.error);
-    if(r.status === 401) return askError(box, j.error || 'This feature is locked.', true);
     // the upstream error code is the actionable half — show it, don't swallow it
     if(!r.ok && r.status !== 202)
       return askError(box, (j.error || ('Request failed (' + r.status + ')')) +
@@ -4249,7 +4217,7 @@ async function submitAsk(it, box, idx, payload){
        A semantic match does not — you asked one thing and a differently worded
        fact arrived — so say why, calmly, rather than looking like the button
        did nothing. */
-    if(j.semantic) askError(box, 'Someone already asked this in different words, so no call was placed. Their answer is below — press Recheck on it if it looks out of date.', false, true);
+    if(j.semantic) askError(box, 'Someone already asked this in different words, so no call was placed. Their answer is below — press Recheck on it if it looks out of date.', true);
     return;
   }
   if(!j.callId){ if(btn) btn.disabled = false; return askError(box, j.error || 'The call could not be started.'); }
@@ -4279,7 +4247,7 @@ async function submitRound(it, box, idx, places, payload, confirmed){
   if(err){ err.hidden = true; err.textContent = ''; }
 
   const { _label, _round, ...ask } = payload;
-  const willDial = confirmed === true || !askLive();
+  const willDial = confirmed === true;
   liveNote(box, willDial ? `Calling ${places.length} places…` : 'Checking the question…',
     places.map(p=>p.name).join(', '), willDial);
 
@@ -4293,11 +4261,11 @@ async function submitRound(it, box, idx, places, payload, confirmed){
     if(btn) btn.disabled = false;
     if(r.status === 428 && j.needsConfirm)
       return renderConfirm(it, box, idx, { ...payload, _round: places }, j.preview);
-    if(r.status === 401 && j.code === 'auth_required'){
-      askError(box, 'Sign in to request a call.', false, true);
-      return openAcct();
+    if(r.status === 401){
+      askError(box, j.error || 'Sign in to request a call.', true);
+      if(j.code === 'auth_required') return openAcct();
+      return;
     }
-    if(r.status === 401) return askError(box, j.error || 'This feature is locked.', true);
     if(!r.ok && r.status !== 202)
       return askError(box, (j.error || ('Request failed (' + r.status + ')')) + (j.code ? ` [${j.code}]` : ''));
   }catch(e){
@@ -4313,11 +4281,11 @@ async function submitRound(it, box, idx, places, payload, confirmed){
   askNotifyPermission();
   waitForRound(it, box, idx, j.callId, _label || '');
   /* Said after the waiting state is up, so it reads as a note about a round
-     that is running rather than as a failure. Only the simulated path can
-     arrive here with anything to say — a live round showed the same list on
-     the confirmation screen a moment ago. */
+     that is running rather than as a failure. Usually there is nothing to say,
+     since the confirmation screen showed this list a moment ago — but a place
+     can be dropped between the confirmation and the call going out. */
   if((j.dropped || []).length)
-    askError(box, `Calling ${(j.recipients || []).length}: not ${j.dropped.map(d=>`${d.name} (${d.why})`).join(', ')}.`, false, true);
+    askError(box, `Calling ${(j.recipients || []).length}: not ${j.dropped.map(d=>`${d.name} (${d.why})`).join(', ')}.`, true);
 }
 
 function waitForRound(it, box, idx, callId, label){
@@ -4395,7 +4363,7 @@ function waitForAnswer(it, box, idx, callId, label){
         finishCallOverlay(unreachable ? 'No answer' : (ok ? 'Answer received' : 'Call finished'),
           unreachable ? 'Nobody picked up' : (j.entry.topic || j.entry.question || ''), ok);
         if(unreachable)
-          askError(box, `No answer at ${it.name} — the call reached voicemail or nobody picked up, so there is nothing to add. You can try again in a moment.`, false, true);
+          askError(box, `No answer at ${it.name} — the call reached voicemail or nobody picked up, so there is nothing to add. You can try again in a moment.`, true);
         return notifyAnswer(it, j.entry);
       }
     }catch(e){}
@@ -4419,24 +4387,6 @@ contentEl.addEventListener('submit', ev=>{
   const it = state.currentPOIs[idx];
   if(!it) return;
 
-  const codeField = form.elements.code;
-  if(codeField){                                          // the unlock form, not the question
-    const code = (codeField.value || '').trim();
-    const btn = form.querySelector('button');
-    if(btn) btn.disabled = true;
-    /* Verify before storing. Storing an unchecked code would leave the panel
-       claiming real calls are unlocked while every ask quietly simulated —
-       the one wrong impression this feature can give. */
-    fetchT('/api/ask-access', { method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ code }) }, 9000)
-      .then(r=>r.json()).then(j=>{
-        if(!j.ok){ if(btn) btn.disabled = false; return askError(box, 'That code was not accepted.'); }
-        try{ localStorage.setItem(ASK_CODE_KEY, code); }catch(e){}
-        renderAsk(it, box, idx);
-      })
-      .catch(()=>{ if(btn) btn.disabled = false; askError(box, 'Could not check that code right now.'); });
-    return;
-  }
   const q = (form.elements.q.value || '').trim();
   if(q) submitAsk(it, box, idx, { question: q });
 });
@@ -4562,21 +4512,6 @@ contentEl.addEventListener('click', ev=>{
       // a private entry is reasked privately
       ...(again.dataset.priv ? { isPrivate: true } : {})
     });
-    return;
-  }
-  const unlock = ev.target.closest('.ask-unlock');
-  if(unlock){
-    const box = unlock.closest('.ask-box');
-    if(box) askError(box, 'Enter the real-call code to place actual phone calls.', true, true);
-    return;
-  }
-  const lock = ev.target.closest('.ask-lock');
-  if(lock && state.currentPOIs){
-    const box = lock.closest('.ask-box');
-    const idx = box ? +box.id.split('-')[1] : -1;
-    const it = state.currentPOIs[idx];
-    try{ localStorage.removeItem(ASK_CODE_KEY); }catch(e){}
-    if(it && box) renderAsk(it, box, idx);
     return;
   }
   const go = ev.target.closest('.ask-go');

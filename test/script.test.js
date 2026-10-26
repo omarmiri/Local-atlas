@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { calle, PLACE, QUESTION, PHONE } = require('./helpers');
 const { buildTask, placeNoun, openerFor, templatesFor, TEMPLATES,
-        RESULT_SCHEMA, DISCLOSURE, realCallOk } = calle;
+        RESULT_SCHEMA, DISCLOSURE, configured } = calle;
 
 const task = (over = {}) =>
   buildTask({ place: { ...PLACE, ...(over.place || {}) },
@@ -137,10 +137,28 @@ test('an evidence quote is a required field, not an optional extra', () => {
   assert.ok(RESULT_SCHEMA.required.includes('evidence_quote'));
 });
 
-/* ---- the real-call unlock ---- */
+/* ---- what stands in front of the dialler ----
+   There used to be an access code here, and a test that no wrong code got
+   past it. The code is gone: being signed in is the permission, and the
+   courtesy checks in calle.js are what refuse a call. What is still worth
+   asserting is that no gate was left behind that could be mistaken for one,
+   and that a deploy which cannot dial says so rather than doing something
+   else instead — the simulated path that used to catch this is gone too. */
 
-test('an empty or wrong access code never unlocks a real call', () => {
-  for(const code of ['', null, undefined, 'guess', 'x'.repeat(64)]){
-    assert.equal(realCallOk(code), false, `code ${JSON.stringify(code)}`);
+test('there is no access code left to unlock anything with', () => {
+  assert.equal(calle.realCallOk, undefined);
+  assert.equal(calle.realCallsPossible, undefined);
+});
+
+test('the simulator is gone, so nothing can produce an answer without dialling', () => {
+  for(const name of ['simulate', 'simFallback', 'simOutcome']){
+    assert.equal(calle[name], undefined, name);
   }
+});
+
+/* helpers.js pins CALLE_DRY_RUN=1 and no API key, which is precisely a deploy
+   that cannot place a call. `configured` is the one predicate the app reads
+   to decide whether to offer the ask at all. */
+test('a deploy that cannot dial reports itself unconfigured', () => {
+  assert.equal(configured(), false);
 });

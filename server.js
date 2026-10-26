@@ -146,7 +146,7 @@ app.get('/api/cache-test', async (req, res) => {
        this host can read one OSM element. Overpass cannot be reached from here
        at all — all three mirrors refuse even a one-element query — so listing
        verification uses the OSM API instead, and whether that answers decides
-       whether a third of the map can be called live or only simulated. */
+       whether a third of the map can be called at all. */
     let osmLookup = 'not tested';
     try{
       const t1 = Date.now();
@@ -1839,11 +1839,13 @@ async function listedListing(place){
    the spread and be mistaken for one we looked up. */
 const withListedListing = async place => ({ ...place, listed: await listedListing(place) });
 
-/* Every path through here can spend a CALL-E credit, so every path through
-   here needs a name attached — that is the whole reason this app grew accounts.
-   Note that requireUser sits in front of *both* kinds of ask: a new verified
-   fact and a private action cost the same credit, and reading an answer someone
-   already collected still costs nothing and still needs nobody. */
+/* Every path through here spends a CALL-E credit and rings a real phone, so
+   every path through here needs a name attached — that is the whole reason
+   this app grew accounts, and since the access code came out it is the only
+   thing standing in front of the dialler besides the courtesy checks in
+   calle.js. requireUser sits in front of *both* kinds of ask: a new verified
+   fact and a private action cost the same credit, and reading an answer
+   someone already collected still costs nothing and still needs nobody. */
 app.post('/api/ask-place', express.json({ limit: '8kb' }), auth.attachUser, auth.requireUser,
   async (req, res) => {
     try{
@@ -1852,8 +1854,7 @@ app.post('/api/ask-place', express.json({ limit: '8kb' }), auth.attachUser, auth
         return res.status(400).json({ error: 'place {name, lat, lon, phone} required' });
       const r = await calle.askPlace({ place: await withListedListing(place), question, templateId,
         confirmed: confirmed === true, force: force === true,
-        isPrivate: isPrivate === true, uid: req.user.id,
-        accessCode: req.get('x-atlas-access') || '' });
+        isPrivate: isPrivate === true, uid: req.user.id });
       res.status(r.status || 200).json(r);
     }catch(e){ res.status(calleErrStatus(e)).json(calleErrBody(e)); }
   });
@@ -1876,8 +1877,7 @@ app.post('/api/ask-around', express.json({ limit: '16kb' }), auth.attachUser, au
         return res.status(400).json({ error: 'each place needs {name, lat, lon, phone}' });
       const r = await calle.askAround({ places: await Promise.all(places.map(withListedListing)),
         question, templateId,
-        confirmed: confirmed === true,
-        uid: req.user.id, accessCode: req.get('x-atlas-access') || '' });
+        confirmed: confirmed === true, uid: req.user.id });
       res.status(r.status || 200).json(r);
     }catch(e){ res.status(calleErrStatus(e)).json(calleErrBody(e)); }
   });
@@ -1890,15 +1890,6 @@ app.get('/api/rounds', auth.attachUser, auth.requireUser, async (req, res) => {
   catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
-/* Lets the unlock form tell a wrong code from a working one without having to
-   start a call to find out. Reveals only whether the code unlocks anything —
-   and on a deploy that will simulate regardless (dry run, no key, an unpinned
-   origin) the answer is no, because accepting a code there would promise a real
-   call the server has already decided not to place. */
-app.post('/api/ask-access', express.json({ limit: '2kb' }), (req, res) => {
-  res.json({ ok: calle.realCallsPossible() && calle.realCallOk((req.body || {}).code || '') });
-});
-
 /* Question chips for one place: Gemini's place-specific suggestions first, then
    the fixed templates. POST because it takes the place object, and because the
    suggestions are per-place rather than per-category and so aren't cacheable. */
@@ -1909,17 +1900,10 @@ app.post('/api/ask-suggestions', express.json({ limit: '4kb' }), async (req, res
   }catch(e){ res.status(502).json({ error: String(e.message || e) }); }
 });
 
-/* Operator view of one place: every stored call including the transcripts that
-   no longer go to the public panel. Behind the real-call code. */
-app.post('/api/calle/calls', express.json({ limit: '8kb' }), async (req, res) => {
-  try{
-    if(!calle.realCallOk(req.get('x-atlas-access') || ''))
-      return res.status(401).json({ error: 'access code required' });
-    const p = req.body || {};
-    if(!p.name) return res.status(400).json({ error: 'place required' });
-    res.json({ items: await calle.listCalls(p) });
-  }catch(e){ res.status(calleErrStatus(e)).json(calleErrBody(e)); }
-});
+/* There is no operator transcript route any more. It existed behind the
+   real-call access code, and with the code gone the only honest options were
+   to leave transcripts of strangers' phone calls on a public URL or to take
+   the route out. Nothing in the app called it. */
 
 /* Polling stays open to anonymous callers — a public call in flight is nobody's
    secret — but the uid is passed through so pollCall can refuse to hand a

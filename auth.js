@@ -46,14 +46,18 @@ const configured = () => !!SUPA_URL && !!SUPA_ANON;
 
    What it is gated on is the inability to dial, not the intent not to. Two
    conditions produce that, and either will do: no CALL-E key at all, or
-   CALLE_DRY_RUN=1, which calle.js enforces both at the decision (`live` reads
-   it first) and at the transport (the credentialed client refuses to exist).
-   Absent accounts is the third condition and is required — a deploy with a
-   Supabase project has real users, and a fixed local reviewer has no business
-   in it.
+   CALLE_DRY_RUN=1, which calle.js enforces both at the decision (configured()
+   reads it first) and at the transport (the credentialed client refuses to
+   exist). Absent accounts is the third condition and is required — a deploy
+   with a Supabase project has real users, and a fixed local reviewer has no
+   business in it.
 
-   The flag is off by default, and any real deployment fails at least one of
-   the conditions above. */
+   Since the simulator came out there is nothing for a reviewer to run here:
+   on a deploy that cannot dial, the ask form reports the feature as
+   unconfigured. The flag stays because what it is really about is accounts,
+   and a reviewer still gets the rest of the signed-in app. It is off by
+   default, and any real deployment fails at least one of the conditions
+   above. */
 const DRY_RUN = env('CALLE_DRY_RUN', 'CALL-E-DRY-RUN') === '1';
 const REVIEW_MODE = env('REVIEW_MODE') === '1'
   && !configured()
@@ -62,7 +66,7 @@ const REVIEW_USER = { id: 'review-mode-local', email: 'reviewer@localhost' };
 if(env('REVIEW_MODE') === '1' && !REVIEW_MODE)
   console.warn('REVIEW_MODE ignored: it only applies with no Supabase project, and with either no CALL-E API key or CALLE_DRY_RUN=1.');
 else if(REVIEW_MODE)
-  console.warn('REVIEW_MODE on: call requests run as a local reviewer. Every call is simulated.');
+  console.warn('REVIEW_MODE on: call requests run as a local reviewer. This deploy cannot dial, so no call can be placed.');
 
 const DAY = 86400e3;
 const prefsKey = uid => 'atlas:prefs:' + uid;

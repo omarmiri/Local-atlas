@@ -71,9 +71,9 @@ proxy timeout — so the result arrives by webhook, with client polling as the f
 
 ## The opening, in two turns
 
-The agent's first words are fixed, built in one place, and used by the call script, the simulator,
-**and the confirmation preview** — if the preview showed a different line from the one the agent
-reads out, the confirmation would be a lie.
+The agent's first words are fixed, built in one place, and used by the call script **and the
+confirmation preview** — if the preview showed a different line from the one the agent reads out,
+the confirmation would be a lie.
 
 > **1.** "Hi — is now a good moment for one quick question about your *playground*?"
 >
@@ -141,9 +141,7 @@ because `/api/ask-place` is a public URL.
 
 | Guarantee | How |
 |---|---|
-| **Simulated by default** | A wrong or missing access code produces a clearly-labelled simulated answer — never a silent real call. One `live` flag decides it, read by every later branch. |
-| **Real calls need a code** | `REAL_CALL_ACCESS_CODE`, compared with a SHA-256 + `timingSafeEqual` (hash first: a length mismatch throws, and the throw leaks the length). With no code configured, **no request can ever reach the real API.** |
-| **Sign-in required** | `/api/ask-place` sits behind `requireUser`. |
+| **Sign-in is the permission** | `/api/ask-place` and `/api/ask-around` sit behind `requireUser`, and that is now the whole of who may spend a credit. Until v10.12 a real call also needed `REAL_CALL_ACCESS_CODE` and anything without it got a clearly-labelled simulated answer; both the code and the simulator are gone, so an ask by a signed-in visitor dials. Everything below is what stands between that visitor and a stranger's phone, and all of it ran on the live path before — the only change is that there is no longer a second path. |
 | **The number comes from the listing, not the request** | `place` arrives in the request body, so until v10.0 the number to dial did too — and the UI being well behaved is not a property of the system. An account holder who also had the real-call code could post any place they liked, with `openNow: true` and `confirmed: true`, and have this app ring a number of their choosing while announcing itself as calling for a visitor. The server now looks the number up again itself by the listing's provider id and dials **that**; a live call with nothing to check against is refused. Only the operator's own demo line is exempt. |
 | **And the name comes from the same lookup** | Verifying the number alone left the rest of the identity to the request body, and the two could name different businesses. `place` carries a Google, Foursquare or OSM id — a listing this app served carries exactly one — but `listedPhone` read OSM's first while `placeKey` ignored `osmId` and keyed on `gid`, so a body pairing place A's `osmId` with place B's `gid` verified and dialled **A** while the script announced **B** and the answer was filed under **B**. Since v10.4 one resolver (`providerRef`) decides which id a place *is*, a body naming two sources is refused with `400`, an OSM record is keyed by its object id rather than by name and coordinates, and the lookup returns the name and address alongside the number — so the business announced on the call, and the record the answer lands in, are the business whose line was verified. |
 | **And only numbers worth dialling** | US and Canadian numbers only, with the common NANP premium-rate patterns blocked — the 900 area code and the 976 exchange, which sit in different positions and were first written as if both were area codes. Emergency and service codes were already unreachable — 911 and 411 are too short to survive E.164 normalisation — but every international number was not, and `+447700900123` normalises perfectly well. |
@@ -151,7 +149,7 @@ because `/api/ask-place` is a public URL.
 | **Never call a closed business** | `openNow === false` blocks. `null` means we don't know, and not knowing isn't a reason to refuse — only an explicit false. |
 | **Never call at an unreasonable hour** | 10am–8pm **where the phone is**, read from the listing's own coordinates. The hour that matters belongs to the person picking up: judging every call by one Eastern clock made 10am Eastern a 7am call in Vancouver and a 4am one in Honolulu, while refusing perfectly civil calls at 6pm Pacific. Longitude gives the zone and `Intl` gives the hour, so daylight time is not an arithmetic bug waiting for March. |
 | **Never call twice for one question** | A 10-minute in-flight lock, plus a CALL-E `Idempotency-Key`. A forced recheck adds an hour bucket to the key — otherwise CALL-E would replay the original call and hand back the very answer being rechecked, while a double-click inside the hour still dedupes. |
-| **Hard daily ceiling** | `CALLE_DAILY_CALL_BUDGET` (default 25), reserved atomically before dialling — and **only** before dialling. The reservation adds first and puts it back if it did not fit, because read-compare-write cannot hold a cap once two requests overlap: both read the same total, both find room, and the later write erases the earlier. Ten concurrent asks against a cap of five all succeeded, and the counter finished on one. The reservation used to sit above the simulator branch, so a demo, or a reviewer working through the flow, spent the day's real-call allowance on calls that rang nobody and then told the next person a budget they had not used was exhausted. A round reserves one slot per line, all or nothing. |
+| **Hard daily ceiling** | `CALLE_DAILY_CALL_BUDGET` (default 25), reserved atomically before dialling — and **only** before dialling. The reservation adds first and puts it back if it did not fit, because read-compare-write cannot hold a cap once two requests overlap: both read the same total, both find room, and the later write erases the earlier. Ten concurrent asks against a cap of five all succeeded, and the counter finished on one. It sits after the confirmation gate, so an abandoned confirmation costs nothing. A round reserves one slot per line, all or nothing. |
 | **The demo line is exempt** — and only it | The courtesy rules are keyed on the **dialled number**, not on the client's `demo` flag, which anyone could set on a real business to call it at 3am. |
 
 ### Canada is not a US call
@@ -184,7 +182,7 @@ A completed call produces one record. The fields are the point of the feature:
   evidenceQuote,                    // the staff member's own words, ≤200 chars
   staffConfidence,                  // certain | hedged | unknown
   source: 'first_party_phone',
-  simulated,                        // carried through, never inferred
+  simulated,                        // legacy: see below. Nothing sets it any more
   collectedAt, expiresAt,
   callSummary, transcript,          // visitor-facing narration + up to 60 turns
   failureCode, failureMessage
@@ -200,8 +198,10 @@ A completed call produces one record. The fields are the point of the feature:
   listing shows is the answer, the quote, and the date.
 - **Rechecks are the reader's to make.** An answer can be wrong long before its TTL says so — hours
   shift, policies change seasonally, and the person reading the page may simply know better.
-- **Simulated is never presented as real.** The flag rides in the record itself and the panel says
-  so out loud. This is the one thing the feature must not get wrong.
+- **`simulated` is a tombstone, not a mode.** Nothing writes it any more. It stays on the record,
+  and in the visitor-facing fields, because entries collected while the simulator existed are
+  still in the store until their TTL runs out — and the panel's *simulated call* badge is the only
+  thing keeping those from reading as facts somebody confirmed by phone.
 
 ## Private Actions
 
@@ -328,27 +328,34 @@ Finding `calle:priv:<uid>:*` needs key enumeration, which is why [`store.js`](st
 a real `docDel`. Every other read in that file is by exact key on purpose; this is the one caller
 that cannot be.
 
-## Simulation
+## There is no simulated call any more
 
-`CALLE_DRY_RUN=1` exercises the entire flow — validation, moderation, confirmation, storage,
-polling, the panel — and places no call. It is a hard switch, not a hint, and it is enforced in
-two places rather than one:
+There used to be one, and it was the default: an access code unlocked real calls, and every ask
+without the code got a generated transcript labelled *simulated*. It existed because CALL-E has no
+sandbox — the OpenAPI spec exposes a single production server and no test flag, and the staging
+mirror still dials a real phone — so a feature nobody could try without spending a credit on a
+stranger was a feature nobody tried.
 
-- **the decision**: `live` is `realCallsPossible() && realCallOk(accessCode)`, and dry run is the
-  first term of `realCallsPossible()`, so a deploy holding both a key *and* the access code still
-  simulates;
+Credits stopped being the scarce thing, so the honest version is cheaper to reason about: **asking
+means dialling.** The code, the unlock form, `simulate()`, `simulateRound()` and the
+`CALLE_SIM_*` settings are gone, and with them two whole classes of bug — a panel that claimed one
+thing while the server did another, and a budget spent on calls that rang nobody.
+
+What is left is one predicate. `configured()` is true only where a call can actually be placed: a
+key, a pinned origin, and dry run off. `/api/health` reports it, the panel reads it to decide
+whether to offer the ask at all, and there is no second question underneath it.
+
+`CALLE_DRY_RUN=1` stays as the kill switch, enforced in two places rather than one:
+
+- **the decision**: it is the first term of `configured()`, so a deploy holding a key still
+  refuses to dial, and the UI reports the feature unconfigured rather than offering an ask that
+  would fail;
 - **the transport**: `client()` — the single chokepoint every authenticated request goes through —
   refuses to construct the SDK client at all. Dry mode makes no credentialed request of any kind,
   not just no call.
 
-`/api/health` reports `calle.realCalls: false` in dry mode and `POST /api/ask-access` rejects even
-a correct code, so nothing in the UI offers an unlock that would not be honoured.
-
-The feature is still *configured* without a credential, which is the point: the simulated pipeline
-is the walkthrough, and simulated calls are free, harmless and open to everyone. The whole call is
-generated up front and revealed after `CALLE_SIM_DURATION_MS` (18s), because generating at poll time
-would race two in-flight polls into two different transcripts for one call. `CALLE_SIM_OUTCOME` pins
-the result for a scripted demo.
+It no longer has a simulated path to fall back on, which is the point: it disables the feature
+outright instead of faking it.
 
 ## The credential origin is pinned
 
@@ -364,7 +371,7 @@ The check is an exact match on `URL.origin` — never a suffix test, which
 userinfo, no explicit port, no path, no query. Anything else is a **configuration error, not a
 fallback to the default**: silently dialling production because staging was misspelled is the kind
 of helpfulness that spends credits on the wrong account. The server warns at boot, reports
-`realCalls: false`, refuses to build the credentialed client, and answers `503` to an ask.
+`configured: false`, refuses to build the credentialed client, and answers `503` to an ask.
 
 ## What makes a fact "verified"
 
@@ -399,7 +406,7 @@ substring of at least 12 characters. Failures downgrade rather than invent:
 
 The shared list has exactly one gate: `publish()` will not write to a place's public answers unless
 the result is marked bound *and* the call it came from completed. Both the webhook and the poll go
-through it, and so does the simulator. Losing an answer costs the asker a retry. Publishing an
+through it. Losing an answer costs the asker a retry. Publishing an
 unbound one costs the claim every other entry on the page depends on.
 
 ## Tests
@@ -454,7 +461,7 @@ The SDK is ESM-only and `server.js` is CommonJS, so it's reached through a lazy 
 | `GET  /api/rounds` | This account's comparison rounds. |
 | `DELETE /api/auth/account` | Delete the account and everything stored under it. See [Deleting an account](#deleting-an-account). |
 | `POST /api/calle/webhook/:token` | Result callback. Takes the id, re-reads the record. |
-| `POST /api/calle/calls` | Operator view of one place's stored calls, transcripts included. Behind the real-call code. |
+| ~~`POST /api/calle/calls`~~ | Removed in v10.12. It was an operator view of one place's stored transcripts, gated on the real-call access code; with the code gone the choice was between leaving strangers' phone calls on a public URL and taking the route out. Nothing in the app called it. |
 
 ## CALL-E configuration
 
@@ -465,15 +472,13 @@ export — `process.env.X` dot-access can never reach it.
 | Variable | Default | Purpose |
 |---|---|---|
 | `CALLE_API_KEY` | — | CALL-E credential. Absent ⇒ the feature is unconfigured and the app boots normally without it. |
-| `REAL_CALL_ACCESS_CODE` | — | Unlocks real calls. **Unset ⇒ every call is simulated.** (`CALLE_ACCESS_CODE` still honoured for existing deploys.) |
 | `CALLE_WEBHOOK_TOKEN` | generated | Makes the callback URL unguessable. |
-| `CALLE_DRY_RUN` | `0` | `1` runs the whole flow and places no call. A hard switch: it also blocks every credentialed request, and overrides a key and a correct access code. See [Simulation](#simulation). |
-| `REVIEW_MODE` | `0` | `1` runs call requests as a fixed local reviewer, so the feature is reachable with no identity provider. Applies **only** when Supabase is unconfigured *and* the server cannot dial (no `CALLE_API_KEY`, or `CALLE_DRY_RUN=1`), so it is inert on any real deployment. |
+| `CALLE_DRY_RUN` | `0` | `1` disables calling outright: the feature reports itself unconfigured, and no credentialed request of any kind is made. Overrides a key. See [there is no simulated call any more](#there-is-no-simulated-call-any-more). |
+| `REVIEW_MODE` | `0` | `1` runs call requests as a fixed local reviewer, so the signed-in half of the app is reachable with no identity provider. Applies **only** when Supabase is unconfigured *and* the server cannot dial (no `CALLE_API_KEY`, or `CALLE_DRY_RUN=1`), so it is inert on any real deployment. Since the simulator came out there is no call for a reviewer to place: on a deploy that cannot dial, the panel says the feature is unconfigured. |
 | `CALLE_DAILY_CALL_BUDGET` | `25` | Hard ceiling on calls per day. |
 | `CALLE_FAQ_TTL_DAYS` | `90` | Lifetime of a shared verified fact. |
 | `CALLE_PRIVATE_TTL_DAYS` | `30` | Lifetime of a private result. |
 | `CALLE_CALLER_IDENTITY` | `Local Atlas, a local guide website` | What the agent says it's calling on behalf of. |
-| `CALLE_SIM_OUTCOME`, `CALLE_SIM_DURATION_MS` | —, `18000` | Pin a simulated outcome / its duration. |
 | `CALLE_BASE_URL` | — | Must be an official CALL-E HTTPS origin; anything else disables live calls. See [pinned origin](#the-credential-origin-is-pinned). |
 | `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL` | Origin the webhook must be reachable on. |
 | `DEMO_PLACE_PHONE` + `DEMO_PLACE_*` | — | A test listing so demo calls dial a line you own instead of bothering a real business. See below. |
@@ -806,10 +811,11 @@ recorded who asked; see [Deleting an account](#deleting-an-account).
 
 - **Ask the Place needs a phone number.** Places with no listed number can't be called; the panel
   says so rather than offering a button that fails.
-- **Real calls are gated and budgeted.** No access code ⇒ simulated. `CALLE_DRY_RUN=1` ⇒ simulated,
-  whatever else is set. Budget spent ⇒ refused until tomorrow. Outside 10am–8pm *where that phone
-  is*, or the place is listed closed ⇒ refused. A simulated call reserves no budget, because it
-  rings nobody.
+- **Asking rings a real phone, and is budgeted.** Signed in ⇒ you may ask; there is no access code
+  and no simulated answer. `CALLE_DRY_RUN=1` ⇒ the feature reports itself unconfigured and no ask
+  is offered. Budget spent ⇒ refused until tomorrow. Unconfirmed ⇒ refused with a preview.
+  A number the server could not verify against the listing, outside 10am–8pm *where that phone
+  is*, or a place listed closed ⇒ refused.
 - **A result that cannot be bound to a request is dropped, not published.** See
   [what makes a fact verified](#what-makes-a-fact-verified) — an answer with no staff turn behind it,
   or a quote that appears nowhere in the transcript, never becomes a shared fact. The asker is still
